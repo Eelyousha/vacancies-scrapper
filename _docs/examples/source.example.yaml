@@ -1,0 +1,50 @@
+# Шаблон конфигурации одного источника вакансий.
+# Удаляйте необязательные блоки и поля, если сайт их не использует.
+site_name: "Example Careers"
+base_url: "https://careers.example.com"
+
+# Необязательно. {query} подставляет поисковый запрос при запуске.
+search_url_template: "https://careers.example.com/jobs?query={query}"
+
+# Необязательно. Используется, когда поиск нельзя выразить через URL.
+search_on_ui:
+  input_selector: "input[type='search']"
+  submit_selector: "button[type='submit']"
+  # enter: true # Использовать вместо submit_selector, если поиск отправляется Enter.
+
+page:
+  # Элемент, появление которого означает, что список вакансий отрисован.
+  wait_for_selector: ".jobs-list"
+  timeout_seconds: 30
+  # Пауза после действия пагинации, до следующего подсчёта карточек.
+  settle_delay_ms: 1500
+
+# Необязательно. Полностью удалите блок, если все вакансии уже есть в первом DOM.
+pagination:
+  # Единственное поддерживаемое значение: скролл и клик по кнопке, если она доступна.
+  type: "scroll_or_button"
+  # Необязательно для чистого scroll. Кнопка загрузки следующей порции.
+  action_selector: "button.load-more"
+  max_attempts_without_new_data: 5
+  max_iterations: 100
+  stop_conditions:
+    # Каждый селектор необязателен. Оставляйте только существующие на сайте.
+    no_more_results_selector: ".no-more-results"
+    button_disabled_selector: "button.load-more[disabled]"
+
+selectors:
+  # container и card обязательны. Остальные поля извлекаются внутри card.
+  container: ".jobs-list"
+  card: ".job-card"
+  title: "h2"
+  company: ".company-name"
+  salary: ".salary"
+  # Обязательное поле: CSS-селектор ссылки внутри card.
+  link: "a.job-card__link"
+  # Необязательно. Пока только хранится, без истории изменений.
+  description: ".job-card__description"
+
+identity:
+  # Необязательно. Применяется только если link отсутствует или не удалось нормализовать.
+  # Допустимы: title, company, salary, link, description.
+  fallback_fields: [title, company, link]
