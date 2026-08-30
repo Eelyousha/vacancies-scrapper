@@ -44,6 +44,20 @@ selectors:
   # Необязательно. Пока только хранится, без истории изменений.
   description: ".job-card__description"
 
+# Необязательно. Полностью удалите блок, если ссылка не ведёт на отдельную
+# страницу вакансии либо в ней нет нужных дополнительных данных. Включает обход
+# каждой уникальной ссылки после сбора списка; значения ниже заменяют непустые
+# поля из selectors выше.
+detail_page:
+  # Элемент, подтверждающий отрисовку именно детальной страницы.
+  wait_for_selector: "main.job-detail"
+  timeout_seconds: 30
+  selectors:
+    title: "h1"
+    company: ".job-detail__company"
+    salary: ".job-detail__salary"
+    description: ".job-detail__description"
+
 identity:
   # Необязательно. Применяется только если link отсутствует или не удалось нормализовать.
   # Допустимы: title, company, salary, link, description.
