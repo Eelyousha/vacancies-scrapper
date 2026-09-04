@@ -7,13 +7,13 @@
 Требуется установленный Google Chrome или Chromium, доступный в `PATH`.
 
 ```sh
-go run ./cmd/vacancy-scrape -config yandex_vacancies.yaml -max-results 10
+go run ./cmd/vacancy-scraper -config yandex_vacancies.yaml -max-results 10
 ```
 
 Результат выводится в stdout. Для визуальной отладки браузера:
 
 ```sh
-go run ./cmd/vacancy-scrape -config yandex_vacancies.yaml -headless=false
+go run ./cmd/vacancy-scraper -config yandex_vacancies.yaml -headless=false
 ```
 
 `page.timeout_seconds` ограничивает загрузку страницы. Общий лимит запуска задаётся отдельно: `-run-timeout=5m`.
@@ -23,7 +23,8 @@ go run ./cmd/vacancy-scrape -config yandex_vacancies.yaml -headless=false
 ## Ограничения текущего этапа
 
 * Не выполняется `search_on_ui` и не подставляется `search_url_template` — это будет добавлено вместе с параметром поискового запроса.
-* Не создаются хеши, история, SQLite-записи и архивирование.
+* В проекте есть SQLite-слой для хешей, истории и дельты вакансий, но этот CLI
+  пока не подключает к нему результат сбора и не выполняет архивирование.
 * Конфиг должен содержать `site_name`, абсолютный `base_url`, `page`, `selectors.container`, `selectors.card`, `selectors.title` и `selectors.link`.
 
 При наличии `detail_page` CLI последовательно открывает ссылку каждой найденной вакансии и дополняет её полями с детальной страницы. Ошибки отдельных ссылок попадут в `detail_errors`, но не отменят выдачу списка.

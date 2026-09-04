@@ -8,6 +8,14 @@
 * [04 — API и интерфейс](04-api-ui.md) — HTTP-контракт и пользовательские сценарии;
 * [05 — порядок реализации](05-implementation-plan.md) — этапы, цели и критерии успеха.
 
+В [`implementation`](implementation/README.md) ведётся журнал завершённых
+инкрементов: в нём есть детальные решения, границы изменений и результаты
+проверок без необходимости читать исходный код.
+
+[Backlog](backlog.md) хранит идеи, их приоритет и статус реализации. Шаблон
+новой записи инкремента находится в
+[templates/implementation-record.md](templates/implementation-record.md).
+
 В каталоге [`examples`](examples/) находятся [YAML-шаблон источника](examples/source.example.yaml) и [промпт для генерации конфига с помощью LLM](examples/llm-config-prompt.md).
 
 Корневой файл [`tz_job_aggregator_go.md`](../tz_job_aggregator_go.md) служит краткой точкой входа.
