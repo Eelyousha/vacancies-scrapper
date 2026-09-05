@@ -134,6 +134,97 @@ func TestCompleteRunRejectsSecondCompletion(t *testing.T) {
 	}
 }
 
+func TestCompleteRunArchivesOnlyVacanciesMissingFromCompleteRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+
+	first := startTestRun(t, store, "run-1", source.ID)
+	observed := []ObservedVacancy{
+		{Title: "Seen again", Link: "https://example.test/jobs/1"},
+		{Title: "Missing", Link: "https://example.test/jobs/2"},
+	}
+	if _, err := store.ApplyObservedVacancies(ctx, first.ID, observed); err != nil {
+		t.Fatalf("apply first observations: %v", err)
+	}
+	if _, err := store.CompleteRun(ctx, CompleteRun{ID: first.ID, Status: RunStatusSuccess, CompletionStatus: CompletionStatusComplete, FinishedAt: time.Now()}); err != nil {
+		t.Fatalf("complete first run: %v", err)
+	}
+
+	second := startTestRun(t, store, "run-2", source.ID)
+	if _, err := store.ApplyObservedVacancies(ctx, second.ID, observed[:1]); err != nil {
+		t.Fatalf("apply second observations: %v", err)
+	}
+	completed, err := store.CompleteRun(ctx, CompleteRun{ID: second.ID, Status: RunStatusSuccess, CompletionStatus: CompletionStatusComplete, FinishedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("complete second run: %v", err)
+	}
+	if completed.ArchivedCount != 1 {
+		t.Errorf("archived count = %d, want 1", completed.ArchivedCount)
+	}
+
+	var listingStatus, archivedAt, disposition string
+	if err := store.DB.QueryRowContext(ctx, `
+		SELECT v.listing_status, v.archived_at, srv.disposition
+		FROM vacancies v JOIN scraping_run_vacancies srv ON srv.vacancy_id = v.id
+		WHERE v.source_id = ? AND v.canonical_link = ? AND srv.run_id = ?
+	`, source.ID, "https://example.test/jobs/2", second.ID).Scan(&listingStatus, &archivedAt, &disposition); err != nil {
+		t.Fatalf("read archived vacancy: %v", err)
+	}
+	if listingStatus != "archived" || archivedAt == "" || disposition != "archived" {
+		t.Errorf("archived vacancy = status %q, archived_at %q, disposition %q", listingStatus, archivedAt, disposition)
+	}
+}
+
+func TestCompleteRunDoesNotArchiveAfterPartialOrFailedRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, terminal := range []struct {
+		name       string
+		status     RunStatus
+		completion CompletionStatus
+	}{
+		{name: "partial", status: RunStatusPartial, completion: CompletionStatusIncomplete},
+		{name: "failed", status: RunStatusFailed, completion: CompletionStatusUnknown},
+	} {
+		t.Run(terminal.name, func(t *testing.T) {
+			store := openTestStore(t)
+			defer store.Close()
+			source := createTestSource(t, store, "source-1", "example")
+			first := startTestRun(t, store, "run-1", source.ID)
+			observed := []ObservedVacancy{{Title: "Present", Link: "https://example.test/jobs/1"}, {Title: "Must stay active", Link: "https://example.test/jobs/2"}}
+			if _, err := store.ApplyObservedVacancies(ctx, first.ID, observed); err != nil {
+				t.Fatalf("apply first observations: %v", err)
+			}
+			if _, err := store.CompleteRun(ctx, CompleteRun{ID: first.ID, Status: RunStatusSuccess, CompletionStatus: CompletionStatusComplete, FinishedAt: time.Now()}); err != nil {
+				t.Fatalf("complete first run: %v", err)
+			}
+			second := startTestRun(t, store, "run-2", source.ID)
+			if terminal.status == RunStatusPartial {
+				if _, err := store.ApplyObservedVacancies(ctx, second.ID, observed[:1]); err != nil {
+					t.Fatalf("apply partial observations: %v", err)
+				}
+			}
+			completed, err := store.CompleteRun(ctx, CompleteRun{ID: second.ID, Status: terminal.status, CompletionStatus: terminal.completion, FinishedAt: time.Now()})
+			if err != nil {
+				t.Fatalf("complete %s run: %v", terminal.name, err)
+			}
+			if completed.ArchivedCount != 0 {
+				t.Errorf("archived count = %d, want 0", completed.ArchivedCount)
+			}
+			var listingStatus string
+			if err := store.DB.QueryRowContext(ctx, "SELECT listing_status FROM vacancies WHERE source_id = ? AND canonical_link = ?", source.ID, "https://example.test/jobs/2").Scan(&listingStatus); err != nil {
+				t.Fatalf("read missing vacancy: %v", err)
+			}
+			if listingStatus != "active" {
+				t.Errorf("listing status = %q, want active", listingStatus)
+			}
+		})
+	}
+}
+
 func TestLastRunReturnsMostRecentRunForSource(t *testing.T) {
 	t.Parallel()
 

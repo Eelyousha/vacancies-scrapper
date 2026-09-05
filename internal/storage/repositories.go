@@ -222,6 +222,7 @@ func (s *Store) StartRun(ctx context.Context, input NewRun) (Run, error) {
 
 // CompleteRun permits exactly one terminal update for a running run and then
 // synchronises the source's latest status and diagnostics in the same transaction.
+// A complete successful run also archives active vacancies it did not observe.
 func (s *Store) CompleteRun(ctx context.Context, input CompleteRun) (Run, error) {
 	if err := validateCompletion(input); err != nil {
 		return Run{}, err
@@ -241,6 +242,17 @@ func (s *Store) CompleteRun(ctx context.Context, input CompleteRun) (Run, error)
 		return Run{}, fmt.Errorf("run %q: %w", input.ID, ErrNotFound)
 	} else if err != nil {
 		return Run{}, fmt.Errorf("read run %q: %w", input.ID, err)
+	}
+	if input.Status == RunStatusSuccess && input.CompletionStatus == CompletionStatusComplete {
+		archivedCount, err := archiveUnseenVacancies(ctx, tx, input.ID, sourceID, input.FinishedAt)
+		if err != nil {
+			return Run{}, err
+		}
+		// Only this transaction decides archival, preventing a caller from
+		// claiming archived rows after a partial or failed collection.
+		input.ArchivedCount = archivedCount
+	} else {
+		input.ArchivedCount = 0
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -270,6 +282,36 @@ func (s *Store) CompleteRun(ctx context.Context, input CompleteRun) (Run, error)
 		return Run{}, fmt.Errorf("commit completion for run %q: %w", input.ID, err)
 	}
 	return s.getRun(ctx, input.ID)
+}
+
+func archiveUnseenVacancies(ctx context.Context, tx *sql.Tx, runID, sourceID string, archivedAt time.Time) (int, error) {
+	rows, err := tx.QueryContext(ctx, `
+		UPDATE vacancies
+		SET listing_status = 'archived', archived_at = ?, updated_at = ?
+		WHERE source_id = ? AND listing_status = 'active'
+			AND (last_run_id IS NULL OR last_run_id != ?)
+		RETURNING id
+	`, formatTime(archivedAt), formatTime(archivedAt), sourceID, runID)
+	if err != nil {
+		return 0, fmt.Errorf("archive unseen vacancies for run %q: %w", runID, err)
+	}
+	defer rows.Close()
+
+	archivedCount := 0
+	for rows.Next() {
+		var vacancyID string
+		if err := rows.Scan(&vacancyID); err != nil {
+			return 0, fmt.Errorf("read archived vacancy for run %q: %w", runID, err)
+		}
+		if err := recordRunVacancy(ctx, tx, runID, vacancyID, "archived"); err != nil {
+			return 0, err
+		}
+		archivedCount++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate archived vacancies for run %q: %w", runID, err)
+	}
+	return archivedCount, nil
 }
 
 // LastRun returns the newest run by start time for a particular source.
