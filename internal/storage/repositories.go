@@ -145,6 +145,19 @@ func (s *Store) GetSource(ctx context.Context, id string) (Source, error) {
 	return source, nil
 }
 
+// GetSourceBySlug returns a source by its human-readable unique key.
+func (s *Store) GetSourceBySlug(ctx context.Context, slug string) (Source, error) {
+	row := s.DB.QueryRowContext(ctx, sourceSelect+" WHERE slug = ?", slug)
+	source, err := scanSource(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Source{}, fmt.Errorf("source slug %q: %w", slug, ErrNotFound)
+	}
+	if err != nil {
+		return Source{}, fmt.Errorf("get source slug %q: %w", slug, err)
+	}
+	return source, nil
+}
+
 // UpdateSource changes configuration fields but preserves operational state,
 // which is owned exclusively by run lifecycle methods.
 func (s *Store) UpdateSource(ctx context.Context, source Source) (Source, error) {
