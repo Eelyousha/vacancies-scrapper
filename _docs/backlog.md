@@ -25,9 +25,11 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 6 | Fallback-фингерпринт для источников с динамическими URL вакансий | `выполнено` | [запись](implementation/2026-09-05-fallback-identity.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 7 | Безопасная архивация вакансий только после полного успешного запуска | `выполнено` | [запись](implementation/2026-09-05-safe-vacancy-archival.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 8 | Dry run, `test_token` и ручной API-запуск источника | `выполнено` | [запись](implementation/2026-09-05-dry-run-api.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
-| 9 | Локальный интерфейс ленты, запусков и источников | `идея` | Этап 4 ТЗ |
-| 10 | Расписания, ограничения браузеров и запрет пересечений | `идея` | Этап 5 ТЗ |
-| 11 | Декларативная валидация YAML через struct tags; ручные проверки остаются для межполевых правил | `идея` | `internal/config`, [обсуждение](implementation/2026-09-04-project-development-skill.md) |
+| 9 | API вакансий, источников и запусков для UI | `выполнено` | [запись](implementation/2026-09-06-backend-read-api.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 10 | Завершение backend MVP: тесты API, атомарная блокировка, расписания, import/export | `выполнено` | [запись](implementation/2026-09-06-backend-mvp-hardening.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 11 | Локальный интерфейс ленты, запусков и источников | `идея` | Этап 4 ТЗ |
+| 12 | Расписания, ограничения браузеров и запрет пересечений | `идея` | Этап 5 ТЗ |
+| 13 | Декларативная валидация YAML через struct tags; ручные проверки остаются для межполевых правил | `идея` | `internal/config`, [обсуждение](implementation/2026-09-04-project-development-skill.md) |
 
 ## Как обновлять
 

@@ -220,6 +220,47 @@ func (s *Store) StartRun(ctx context.Context, input NewRun) (Run, error) {
 	return s.getRun(ctx, input.ID)
 }
 
+// StartExclusiveRun prevents overlapping attempts for one source in the same
+// transaction that creates the run record.
+func (s *Store) StartExclusiveRun(ctx context.Context, input NewRun) (Run, error) {
+	if strings.TrimSpace(input.ID) == "" || strings.TrimSpace(input.SourceID) == "" {
+		return Run{}, fmt.Errorf("run id and source id are required")
+	}
+	if input.StartedAt.IsZero() {
+		input.StartedAt = time.Now()
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Run{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE sources SET status=?, updated_at=? WHERE id=? AND status != ?", SourceStatusRunning, formatTime(time.Now().UTC()), input.SourceID, SourceStatusRunning)
+	if err != nil {
+		return Run{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Run{}, err
+	}
+	if affected == 0 {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sources WHERE id=?)", input.SourceID).Scan(&exists); err != nil {
+			return Run{}, err
+		}
+		if exists {
+			return Run{}, fmt.Errorf("start exclusive run for source %q: %w", input.SourceID, ErrInvalidTransition)
+		}
+		return Run{}, fmt.Errorf("start exclusive run for source %q: %w", input.SourceID, ErrNotFound)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO scraping_runs (id,source_id,started_at,status,completion_status) VALUES (?,?,?,?,?)", input.ID, input.SourceID, formatTime(input.StartedAt), RunStatusRunning, CompletionStatusUnknown); err != nil {
+		return Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Run{}, err
+	}
+	return s.getRun(ctx, input.ID)
+}
+
 // CompleteRun permits exactly one terminal update for a running run and then
 // synchronises the source's latest status and diagnostics in the same transaction.
 // A complete successful run also archives active vacancies it did not observe.
@@ -394,13 +435,29 @@ func validateNewSource(input NewSource) error {
 	if input.ScheduleType != "" && input.ScheduleType != "manual" && input.ScheduleType != "cron" && input.ScheduleType != "interval" {
 		return fmt.Errorf("unsupported schedule type %q", input.ScheduleType)
 	}
+	if input.ScheduleType == "interval" {
+		if _, err := time.ParseDuration(input.ScheduleValue); err != nil || input.ScheduleValue == "" {
+			return fmt.Errorf("interval schedule_value must be a duration")
+		}
+	}
+	if input.ScheduleType == "cron" {
+		if len(strings.Fields(input.ScheduleValue)) < 5 {
+			return fmt.Errorf("cron schedule_value must contain at least five fields")
+		}
+		if input.ScheduleTimezone == "" {
+			return fmt.Errorf("cron schedule_timezone is required")
+		}
+		if _, err := time.LoadLocation(input.ScheduleTimezone); err != nil {
+			return fmt.Errorf("invalid cron schedule_timezone: %w", err)
+		}
+	}
 	return nil
 }
 
 func validateSourceUpdate(source Source) error {
 	return validateNewSource(NewSource{
 		ID: source.ID, Slug: source.Slug, Name: source.Name, ConfigYAML: source.ConfigYAML,
-		ScheduleType: source.ScheduleType,
+		ScheduleType: source.ScheduleType, ScheduleValue: source.ScheduleValue, ScheduleTimezone: source.ScheduleTimezone,
 	})
 }
 

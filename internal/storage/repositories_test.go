@@ -134,6 +134,34 @@ func TestCompleteRunRejectsSecondCompletion(t *testing.T) {
 	}
 }
 
+func TestStartExclusiveRunRejectsRunningSource(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+	if _, err := store.StartExclusiveRun(context.Background(), NewRun{ID: "run-1", SourceID: source.ID, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartExclusiveRun(context.Background(), NewRun{ID: "run-2", SourceID: source.ID, StartedAt: time.Now()}); !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("second StartExclusiveRun() error = %v, want ErrInvalidTransition", err)
+	}
+}
+
+func TestUpdateSourceValidatesSchedule(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+	source.ScheduleType = "interval"
+	source.ScheduleValue = "nonsense"
+	if _, err := store.UpdateSource(context.Background(), source); err == nil {
+		t.Fatal("invalid interval schedule was accepted")
+	}
+	source.ScheduleValue = "2h"
+	updated, err := store.UpdateSource(context.Background(), source)
+	if err != nil || updated.ScheduleValue != "2h" {
+		t.Fatalf("valid interval update = %#v, %v", updated, err)
+	}
+}
+
 func TestCompleteRunArchivesOnlyVacanciesMissingFromCompleteRun(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
