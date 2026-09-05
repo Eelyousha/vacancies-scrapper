@@ -24,7 +24,7 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 5 | Выделение журнала запусков из CLI lifecycle | `выполнено` | [запись](implementation/2026-09-05-run-logger.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 6 | Fallback-фингерпринт для источников с динамическими URL вакансий | `выполнено` | [запись](implementation/2026-09-05-fallback-identity.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 7 | Безопасная архивация вакансий только после полного успешного запуска | `выполнено` | [запись](implementation/2026-09-05-safe-vacancy-archival.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
-| 8 | Dry run, `test_token` и ручной API-запуск источника | `идея` | Этап 2 ТЗ |
+| 8 | Dry run, `test_token` и ручной API-запуск источника | `выполнено` | [запись](implementation/2026-09-05-dry-run-api.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 9 | Локальный интерфейс ленты, запусков и источников | `идея` | Этап 4 ТЗ |
 | 10 | Расписания, ограничения браузеров и запрет пересечений | `идея` | Этап 5 ТЗ |
 | 11 | Декларативная валидация YAML через struct tags; ручные проверки остаются для межполевых правил | `идея` | `internal/config`, [обсуждение](implementation/2026-09-04-project-development-skill.md) |

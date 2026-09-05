@@ -137,6 +137,11 @@ func Load(path string) (Source, error) {
 		return Source{}, fmt.Errorf("read config %q: %w", path, err)
 	}
 
+	return Parse(data)
+}
+
+// Parse validates one YAML document supplied by an API request or a file.
+func Parse(data []byte) (Source, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var source Source
