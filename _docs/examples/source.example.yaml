@@ -59,6 +59,7 @@ detail_page:
     description: ".job-detail__description"
 
 identity:
-  # Необязательно. Применяется только если link отсутствует или не удалось нормализовать.
-  # Допустимы: title, company, salary, link, description.
-  fallback_fields: [title, company, link]
+  # Необязательно. При наличии всегда заменяет URL как идентичность вакансии.
+  # Допустимы: title, company, salary, description. Выбирайте устойчивые поля:
+  # изменение их набора или значения создаёт новую вакансию.
+  fallback_fields: [title, company]

@@ -173,6 +173,9 @@ func (s Source) Validate() error {
 	if err := validateDetailPage(s.DetailPage); err != nil {
 		return err
 	}
+	if err := validateIdentity(s.Identity); err != nil {
+		return err
+	}
 	if s.Pagination == nil {
 		return nil
 	}
@@ -184,6 +187,27 @@ func (s Source) Validate() error {
 	}
 	if s.Pagination.MaxIterations <= 0 {
 		return fmt.Errorf("pagination.max_iterations must be greater than zero")
+	}
+	return nil
+}
+
+func validateIdentity(identity *Identity) error {
+	if identity == nil {
+		return nil
+	}
+	if len(identity.FallbackFields) == 0 {
+		return fmt.Errorf("identity.fallback_fields must contain at least one field")
+	}
+	allowed := map[string]struct{}{"title": {}, "company": {}, "salary": {}, "description": {}}
+	seen := make(map[string]struct{}, len(identity.FallbackFields))
+	for _, field := range identity.FallbackFields {
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("identity.fallback_fields contains unsupported field %q", field)
+		}
+		if _, duplicate := seen[field]; duplicate {
+			return fmt.Errorf("identity.fallback_fields contains duplicate field %q", field)
+		}
+		seen[field] = struct{}{}
 	}
 	return nil
 }

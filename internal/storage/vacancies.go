@@ -18,6 +18,8 @@ type ObservedVacancy struct {
 	Salary      string
 	Link        string
 	Description string
+	// IdentityFields overrides URL identity with a YAML-selected field fingerprint.
+	IdentityFields []string
 }
 
 // VacancyDelta reports the dispositions recorded for one application of observations.
@@ -51,16 +53,16 @@ func (s *Store) ApplyObservedVacancies(ctx context.Context, runID string, observ
 	seen := make(map[string]struct{}, len(observed))
 	var delta VacancyDelta
 	for _, item := range observed {
-		canonical, err := CanonicalizeLink(item.Link)
+		identityKey, canonical, err := vacancyIdentity(item)
 		if err != nil {
-			return VacancyDelta{}, fmt.Errorf("canonicalize vacancy link %q: %w", item.Link, err)
+			return VacancyDelta{}, err
 		}
-		if _, duplicate := seen[canonical]; duplicate {
-			return VacancyDelta{}, fmt.Errorf("duplicate vacancy link %q", canonical)
+		if _, duplicate := seen[identityKey]; duplicate {
+			return VacancyDelta{}, fmt.Errorf("duplicate vacancy identity %q", identityKey)
 		}
-		seen[canonical] = struct{}{}
+		seen[identityKey] = struct{}{}
 
-		disposition, err := applyObservedVacancy(ctx, tx, runID, sourceID, canonical, item)
+		disposition, err := applyObservedVacancy(ctx, tx, runID, sourceID, identityKey, canonical, item)
 		if err != nil {
 			return VacancyDelta{}, err
 		}
@@ -77,6 +79,50 @@ func (s *Store) ApplyObservedVacancies(ctx context.Context, runID string, observ
 		return VacancyDelta{}, fmt.Errorf("commit vacancies for run %q: %w", runID, err)
 	}
 	return delta, nil
+}
+
+func vacancyIdentity(item ObservedVacancy) (identityKey, canonical string, err error) {
+	canonical, err = CanonicalizeLink(item.Link)
+	if err != nil {
+		return "", "", fmt.Errorf("canonicalize vacancy link %q: %w", item.Link, err)
+	}
+	if len(item.IdentityFields) == 0 {
+		return canonical, canonical, nil
+	}
+
+	var value strings.Builder
+	nonEmpty := false
+	for _, field := range item.IdentityFields {
+		fieldValue, ok := fallbackFieldValue(item, field)
+		if !ok {
+			return "", "", fmt.Errorf("unsupported fallback identity field %q", field)
+		}
+		fieldValue = strings.TrimSpace(fieldValue)
+		if fieldValue != "" {
+			nonEmpty = true
+		}
+		fmt.Fprintf(&value, "%s\x00%d\x00%s\x00", field, len(fieldValue), fieldValue)
+	}
+	if !nonEmpty {
+		return "", "", fmt.Errorf("fallback identity has no extracted field values")
+	}
+	sum := sha256.Sum256([]byte(value.String()))
+	return "fallback:" + fmt.Sprintf("%x", sum), canonical, nil
+}
+
+func fallbackFieldValue(item ObservedVacancy, field string) (string, bool) {
+	switch field {
+	case "title":
+		return item.Title, true
+	case "company":
+		return item.Company, true
+	case "salary":
+		return item.Salary, true
+	case "description":
+		return item.Description, true
+	default:
+		return "", false
+	}
 }
 
 // CanonicalizeLink produces the stable identity URL defined by the data model.
@@ -111,23 +157,22 @@ type storedVacancy struct {
 	Title       string
 	Company     string
 	Salary      string
-	Link        string
 	Description string
 }
 
-func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, canonical string, item ObservedVacancy) (string, error) {
+func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, identityKey, canonical string, item ObservedVacancy) (string, error) {
 	var current storedVacancy
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, title, company, COALESCE(salary, ''), link, COALESCE(description, '')
-		FROM vacancies WHERE source_id = ? AND canonical_link = ?
-	`, sourceID, canonical).Scan(&current.ID, &current.Title, &current.Company, &current.Salary, &current.Link, &current.Description)
+		SELECT id, title, company, COALESCE(salary, ''), COALESCE(description, '')
+		FROM vacancies WHERE source_id = ? AND identity_key = ?
+	`, sourceID, identityKey).Scan(&current.ID, &current.Title, &current.Company, &current.Salary, &current.Description)
 	now := time.Now().UTC()
 	if errors.Is(err, sql.ErrNoRows) {
-		id := vacancyID(sourceID, canonical)
+		id := vacancyID(sourceID, identityKey)
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO vacancies (id, source_id, title, company, salary, link, canonical_link, description, last_run_id, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, sourceID, item.Title, item.Company, nullIfEmpty(item.Salary), item.Link, canonical,
+			INSERT INTO vacancies (id, source_id, title, company, salary, link, canonical_link, identity_key, description, last_run_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, sourceID, item.Title, item.Company, nullIfEmpty(item.Salary), item.Link, canonical, identityKey,
 			nullIfEmpty(item.Description), runID, formatTime(now), formatTime(now)); err != nil {
 			return "", fmt.Errorf("insert vacancy %q: %w", canonical, err)
 		}
@@ -137,7 +182,7 @@ func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, cano
 		return "added", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("read vacancy %q: %w", canonical, err)
+		return "", fmt.Errorf("read vacancy identity %q: %w", identityKey, err)
 	}
 
 	changed := make([]fieldChange, 0, 3)
@@ -152,9 +197,9 @@ func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, cano
 	}
 	updated := len(changed) > 0 || current.Description != item.Description
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE vacancies SET title = ?, company = ?, salary = ?, description = ?, last_run_id = ?, updated_at = ? WHERE id = ?
-	`, item.Title, item.Company, nullIfEmpty(item.Salary), nullIfEmpty(item.Description), runID, formatTime(now), current.ID); err != nil {
-		return "", fmt.Errorf("update vacancy %q: %w", canonical, err)
+		UPDATE vacancies SET title = ?, company = ?, salary = ?, link = ?, canonical_link = ?, description = ?, last_run_id = ?, updated_at = ? WHERE id = ?
+	`, item.Title, item.Company, nullIfEmpty(item.Salary), item.Link, canonical, nullIfEmpty(item.Description), runID, formatTime(now), current.ID); err != nil {
+		return "", fmt.Errorf("update vacancy identity %q: %w", identityKey, err)
 	}
 	for _, change := range changed {
 		if err := recordHistory(ctx, tx, runID, current.ID, change, now); err != nil {

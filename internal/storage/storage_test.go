@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,11 +15,11 @@ func TestOpenCreatesInitialSchema(t *testing.T) {
 	defer store.Close()
 
 	var version int
-	if err := store.DB.QueryRow("SELECT version FROM schema_migrations").Scan(&version); err != nil {
+	if err := store.DB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Errorf("schema version = %d, want 2", version)
 	}
 
 	for _, table := range []string{"sources", "vacancies", "vacancy_history", "scraping_runs", "scraping_run_vacancies"} {
@@ -55,8 +56,53 @@ func TestOpenAppliesMigrationsOnlyOnce(t *testing.T) {
 	if err := second.DB.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 1 {
-		t.Errorf("applied migrations = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Errorf("applied migrations = %d, want 2", migrationCount)
+	}
+}
+
+func TestOpenBackfillsIdentityKeyForVersionOneDatabase(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "vacancies.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open version one database: %v", err)
+	}
+	initial, err := migrationFiles.ReadFile("migrations/001_initial.sql")
+	if err != nil {
+		t.Fatalf("read initial migration: %v", err)
+	}
+	if _, err := db.Exec(string(initial)); err != nil {
+		t.Fatalf("apply initial schema: %v", err)
+	}
+	if _, err := db.Exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"); err != nil {
+		t.Fatalf("create migration ledger: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schema_migrations (version, applied_at) VALUES (1, '2026-09-01T00:00:00Z')"); err != nil {
+		t.Fatalf("record initial migration: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO sources (id, slug, name, config_yaml, is_active, schedule_type, status, created_at, updated_at) VALUES ('source-1', 'example', 'Example', 'site_name: Example', 1, 'manual', 'idle', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')"); err != nil {
+		t.Fatalf("insert source: %v", err)
+	}
+	const link = "https://example.test/jobs/1"
+	if _, err := db.Exec("INSERT INTO vacancies (id, source_id, title, company, link, canonical_link, created_at, updated_at) VALUES ('vacancy-1', 'source-1', 'Role', 'Example', ?, ?, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')", link, link); err != nil {
+		t.Fatalf("insert version one vacancy: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close version one database: %v", err)
+	}
+
+	store, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open() migration: %v", err)
+	}
+	defer store.Close()
+	var identityKey string
+	if err := store.DB.QueryRow("SELECT identity_key FROM vacancies WHERE id = 'vacancy-1'").Scan(&identityKey); err != nil {
+		t.Fatalf("read identity key: %v", err)
+	}
+	if identityKey != link {
+		t.Errorf("identity_key = %q, want existing canonical URL %q", identityKey, link)
 	}
 }
 
@@ -67,8 +113,8 @@ func TestOpenEnforcesForeignKeys(t *testing.T) {
 	defer store.Close()
 
 	_, err := store.DB.Exec(`
-		INSERT INTO vacancies (id, source_id, title, company, link, canonical_link, created_at, updated_at)
-		VALUES ('vacancy-1', 'missing-source', 'Go developer', 'Example', 'https://example.test/jobs/1', 'https://example.test/jobs/1', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')
+		INSERT INTO vacancies (id, source_id, title, company, link, canonical_link, identity_key, created_at, updated_at)
+		VALUES ('vacancy-1', 'missing-source', 'Go developer', 'Example', 'https://example.test/jobs/1', 'https://example.test/jobs/1', 'https://example.test/jobs/1', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')
 	`)
 	if err == nil {
 		t.Fatal("insert with an unknown source succeeded")

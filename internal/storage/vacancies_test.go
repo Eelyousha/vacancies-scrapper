@@ -94,6 +94,44 @@ func TestApplyObservedVacanciesRejectsCompletedRun(t *testing.T) {
 	}
 }
 
+func TestApplyObservedVacanciesUsesFallbackIdentityForDynamicURLs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+
+	firstRun := startTestRun(t, store, "run-1", source.ID)
+	first := ObservedVacancy{
+		Title: "Go developer", Company: "Example", Link: "https://example.test/jobs/issued-1",
+		IdentityFields: []string{"title", "company"},
+	}
+	if _, err := store.ApplyObservedVacancies(ctx, firstRun.ID, []ObservedVacancy{first}); err != nil {
+		t.Fatalf("apply first observation: %v", err)
+	}
+
+	secondRun := startTestRun(t, store, "run-2", source.ID)
+	second := first
+	second.Link = "https://example.test/jobs/issued-2"
+	delta, err := store.ApplyObservedVacancies(ctx, secondRun.ID, []ObservedVacancy{second})
+	if err != nil {
+		t.Fatalf("apply second observation: %v", err)
+	}
+	if delta.UnchangedCount != 1 || delta.AddedCount != 0 {
+		t.Errorf("delta = %#v, want the same fallback-identified vacancy", delta)
+	}
+
+	thirdRun := startTestRun(t, store, "run-3", source.ID)
+	second.Title = "Senior Go developer"
+	delta, err = store.ApplyObservedVacancies(ctx, thirdRun.ID, []ObservedVacancy{second})
+	if err != nil {
+		t.Fatalf("apply changed fallback observation: %v", err)
+	}
+	if delta.AddedCount != 1 {
+		t.Errorf("delta = %#v, want a new vacancy after fallback change", delta)
+	}
+}
+
 func startTestRun(t *testing.T, store *Store, id, sourceID string) Run {
 	t.Helper()
 	run, err := store.StartRun(context.Background(), NewRun{ID: id, SourceID: sourceID, StartedAt: time.Now()})

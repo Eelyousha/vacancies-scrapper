@@ -22,12 +22,14 @@ type Store struct {
 }
 
 type migration struct {
-	version int
-	path    string
+	version                   int
+	path                      string
+	foreignKeysMustBeDisabled bool
 }
 
 var migrations = []migration{
 	{version: 1, path: "migrations/001_initial.sql"},
+	{version: 2, path: "migrations/002_vacancy_identity_key.sql", foreignKeysMustBeDisabled: true},
 }
 
 // Open connects to one SQLite file, enables foreign-key enforcement, and brings
@@ -44,6 +46,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
+	// Some migrations temporarily disable SQLite foreign keys to rebuild a table.
+	// A single connection makes that connection-scoped setting deterministic.
+	db.SetMaxOpenConns(1)
 
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
@@ -96,32 +101,52 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("read migration %d: %w", item.version, err)
 		}
-		if err := applyMigration(ctx, db, item.version, string(sqlBytes)); err != nil {
+		if err := applyMigration(ctx, db, item, string(sqlBytes)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func applyMigration(ctx context.Context, db *sql.DB, version int, statement string) error {
+func applyMigration(ctx context.Context, db *sql.DB, item migration, statement string) error {
+	if item.foreignKeysMustBeDisabled {
+		// SQLite cannot replace a referenced table while FK enforcement is on.
+		// Open pins the store to one connection, so this pragma covers the migration.
+		if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+			return fmt.Errorf("disable foreign keys for migration %d: %w", item.version, err)
+		}
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin migration %d: %w", version, err)
+		return fmt.Errorf("begin migration %d: %w", item.version, err)
 	}
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("apply migration %d: %w", version, err)
+		return fmt.Errorf("apply migration %d: %w", item.version, err)
 	}
 	if _, err := tx.ExecContext(
 		ctx,
 		"INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-		version,
+		item.version,
 	); err != nil {
-		return fmt.Errorf("record migration %d: %w", version, err)
+		return fmt.Errorf("record migration %d: %w", item.version, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migration %d: %w", version, err)
+		return fmt.Errorf("commit migration %d: %w", item.version, err)
+	}
+	if item.foreignKeysMustBeDisabled {
+		if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+			return fmt.Errorf("enable foreign keys after migration %d: %w", item.version, err)
+		}
+		var table, rowID, parent, foreignKeyIndex any
+		err := db.QueryRowContext(ctx, "PRAGMA foreign_key_check").Scan(&table, &rowID, &parent, &foreignKeyIndex)
+		if err != sql.ErrNoRows {
+			if err != nil {
+				return fmt.Errorf("check foreign keys after migration %d: %w", item.version, err)
+			}
+			return fmt.Errorf("migration %d introduced foreign-key violation in table %v row %v", item.version, table, rowID)
+		}
 	}
 	return nil
 }
