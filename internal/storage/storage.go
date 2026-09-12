@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,6 +27,8 @@ type migration struct {
 	path                      string
 	foreignKeysMustBeDisabled bool
 }
+
+const interruptedRunMessage = "run interrupted before completion; recovered during database open"
 
 var migrations = []migration{
 	{version: 1, path: "migrations/001_initial.sql"},
@@ -107,6 +110,37 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		if err := applyMigration(ctx, db, item, string(sqlBytes)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// RecoverInterruptedRuns turns attempts left running by a stopped server into
+// explicit failures. The server calls it before accepting requests; it is not
+// part of Open because another process may legitimately own an active run.
+func (s *Store) RecoverInterruptedRuns(ctx context.Context) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin interrupted-run recovery: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := formatTime(time.Now().UTC())
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sources
+		SET status = ?, last_run_at = ?, last_error = ?, updated_at = ?
+		WHERE id IN (SELECT source_id FROM scraping_runs WHERE status = ?)
+	`, SourceStatusFailed, now, interruptedRunMessage, now, RunStatusRunning); err != nil {
+		return fmt.Errorf("mark interrupted sources failed: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE scraping_runs
+		SET finished_at = ?, status = ?, completion_status = ?, error_message = ?
+		WHERE status = ?
+	`, now, RunStatusFailed, CompletionStatusUnknown, interruptedRunMessage, RunStatusRunning); err != nil {
+		return fmt.Errorf("mark interrupted runs failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit interrupted-run recovery: %w", err)
 	}
 	return nil
 }

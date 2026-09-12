@@ -26,6 +26,10 @@ go run ./cmd/vacancy-server -database vacancies.db
 ```
 
 Сервер слушает `http://127.0.0.1:8080`; адрес меняется флагом `-address`.
+Ручной запуск защищён независимым лимитом `-run-timeout` (по умолчанию `30m`):
+для особенно долгого источника, например, передайте `-run-timeout 45m`.
+Журнал сервера выводится в консоль; чтобы одновременно дописывать его в файл,
+передайте, например, `-log-file vacancy-server.log`.
 Откройте `http://127.0.0.1:8080`. Основной browser-сценарий:
 
 1. Перейдите в «Новый источник», вставьте YAML, укажите slug и выполните dry run.
@@ -57,6 +61,23 @@ go run ./cmd/vacancy-scraper -config yandex_vacancies.yaml -search "Go developer
 Для визуальной отладки добавьте `-headless=false`. Общий лимит задаёт
 `-run-timeout`; для короткой проверки доступны `-max-pagination-iterations` и
 `-max-detail-pages`.
+
+### Короткая проверка источника
+
+Перед полным ручным запуском сначала проверьте сайт с небольшими лимитами:
+
+```sh
+go run ./cmd/vacancy-scraper -config yandex_vacancies.yaml \
+  -max-pagination-iterations 3 -max-detail-pages 5 -run-timeout 2m
+```
+
+Эта команда ничего не сохраняет в SQLite: она печатает результат в JSON. У
+`vacancy-server` таких флагов нет, потому что его источники хранят YAML в БД.
+Для короткой проверки через браузерный интерфейс создайте отдельный источник с
+новым `slug`, задайте в `pagination` небольшие `max_iterations` (например, `3`)
+и `max_attempts_without_new_data` (например, `2`). Чтобы не ждать
+последовательного обхода всех карточек, временно не добавляйте в этот тестовый
+YAML блок `detail_page`. После dry run сохраните источник и запустите его.
 
 ## JSON API и документация
 

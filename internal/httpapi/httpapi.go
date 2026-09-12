@@ -6,7 +6,9 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,13 +30,29 @@ var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "templat
 var sourceBuilderTemplate = template.Must(template.ParseFS(dashboardAssets, "templates/source_builder.html"))
 
 type API struct {
-	store   *storage.Store
-	dry     *dryrun.Service
-	scraper dryrun.Scraper
+	store      *storage.Store
+	dry        *dryrun.Service
+	scraper    dryrun.Scraper
+	runTimeout time.Duration
 }
 
+// DefaultManualRunTimeout bounds browser work started through the local HTTP
+// interface. It deliberately exceeds ordinary HTTP request deadlines: a manual
+// run is a server operation, not work owned by the client connection.
+const DefaultManualRunTimeout = 30 * time.Minute
+
 func New(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper) http.Handler {
-	a := &API{store: store, dry: dry, scraper: browser}
+	return NewWithRunTimeout(store, dry, browser, DefaultManualRunTimeout)
+}
+
+// NewWithRunTimeout creates the HTTP handler with a server-side timeout for
+// synchronous manual source runs. A non-positive value falls back to the
+// default so programmatic callers cannot accidentally create unbounded runs.
+func NewWithRunTimeout(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper, runTimeout time.Duration) http.Handler {
+	if runTimeout <= 0 {
+		runTimeout = DefaultManualRunTimeout
+	}
+	a := &API{store: store, dry: dry, scraper: browser, runTimeout: runTimeout}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", a.dashboard)
 	mux.HandleFunc("GET /static/app.css", a.dashboardCSS)
@@ -470,7 +488,12 @@ func (a *API) executeSourceRun(ctx context.Context, id string) (storage.Run, int
 // executeSourceRunWithQuery keeps the JSON API contract unchanged while
 // allowing the HTML manual-run form to provide a one-off search phrase.
 func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (storage.Run, int, error) {
-	source, err := a.store.GetSource(ctx, id)
+	// Do not inherit the request context here. Browsers and proxies commonly
+	// cancel a form request before a full scrape has finished; the started run
+	// must still reach a terminal state in the persistent run log.
+	_ = ctx // Kept in the signature for API compatibility with existing callers.
+	persistenceCtx := context.Background()
+	source, err := a.store.GetSource(persistenceCtx, id)
 	if err != nil {
 		return storage.Run{}, http.StatusNotFound, err
 	}
@@ -478,17 +501,25 @@ func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (
 	if err != nil {
 		return storage.Run{}, http.StatusUnprocessableEntity, err
 	}
-	run, err := a.store.StartExclusiveRun(ctx, storage.NewRun{ID: uuid.NewString(), SourceID: id, StartedAt: time.Now().UTC()})
+	run, err := a.store.StartExclusiveRun(persistenceCtx, storage.NewRun{ID: uuid.NewString(), SourceID: id, StartedAt: time.Now().UTC()})
 	if errors.Is(err, storage.ErrInvalidTransition) {
+		log.Printf("manual run rejected source_id=%q source_slug=%q error=%q", id, source.Slug, err)
 		return storage.Run{}, http.StatusConflict, err
 	}
 	if err != nil {
+		log.Printf("manual run could not start source_id=%q source_slug=%q error=%q", id, source.Slug, err)
 		return storage.Run{}, http.StatusInternalServerError, err
 	}
-	result, err := scrapeSourceWithQuery(ctx, a.scraper, cfg, query)
+	log.Printf("manual run started source_id=%q source_slug=%q run_id=%q query=%q", source.ID, source.Slug, run.ID, query)
+	runCtx, cancel := context.WithTimeout(context.Background(), a.runTimeout)
+	defer cancel()
+	result, err := scrapeSourceWithQuery(runCtx, a.scraper, cfg, query)
 	logger := runlog.New(a.store)
 	if err != nil {
-		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
+		err = recordManualRunFailure(logger, source, run, err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return storage.Run{}, http.StatusGatewayTimeout, err
+		}
 		return storage.Run{}, http.StatusBadGateway, err
 	}
 	result.FinishedAt = time.Now().UTC()
@@ -496,13 +527,25 @@ func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (
 	if cfg.Identity != nil {
 		fields = cfg.Identity.FallbackFields
 	}
-	completed, err := logger.Finish(ctx, run.ID, result, fields, storage.CompletionStatusComplete)
+	completed, err := logger.Finish(persistenceCtx, run.ID, result, fields, storage.CompletionStatusComplete)
 	if err != nil {
-		// A failed persistence step must not leave the source locked in running.
-		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
+		err = recordManualRunFailure(logger, source, run, err)
 		return storage.Run{}, http.StatusInternalServerError, err
 	}
+	log.Printf("manual run finished source_id=%q source_slug=%q run_id=%q status=%q added=%d updated=%d archived=%d seen=%d", source.ID, source.Slug, completed.ID, completed.Status, completed.AddedCount, completed.UpdatedCount, completed.ArchivedCount, completed.SeenCount)
 	return completed, http.StatusOK, nil
+}
+
+// recordManualRunFailure always attempts to release the source's exclusive
+// running state. If that finalisation itself fails, return both diagnostics so
+// callers do not mistake a still-running run for a completed failure.
+func recordManualRunFailure(logger runlog.Logger, source storage.Source, run storage.Run, cause error) error {
+	if _, err := logger.Fail(context.Background(), run.ID, cause.Error()); err != nil {
+		log.Printf("manual run failure persistence failed source_id=%q source_slug=%q run_id=%q cause=%q persistence_error=%q", source.ID, source.Slug, run.ID, cause, err)
+		return errors.Join(cause, fmt.Errorf("record failed manual run %q: %w", run.ID, err))
+	}
+	log.Printf("manual run failed source_id=%q source_slug=%q run_id=%q error=%q", source.ID, source.Slug, run.ID, cause)
+	return cause
 }
 
 type queryScraper interface {

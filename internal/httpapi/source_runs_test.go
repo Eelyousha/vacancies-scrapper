@@ -142,6 +142,74 @@ func TestManualSourceRunRejectsAlreadyRunningSourceWithoutSecondRun(t *testing.T
 	}
 }
 
+func TestManualSourceRunDoesNotInheritCanceledHTTPRequestContext(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "vacancies.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	browser := &contextRecordingBrowser{}
+	handler := NewWithRunTimeout(store, dryrun.New(browser, time.Minute), browser, time.Minute)
+	source := createHTMLRunSource(t, store, "source-1", "example", "Example jobs")
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/api/sources/"+source.ID+"/run", nil).WithContext(requestContext)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("POST /api/sources/:id/run with canceled request = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if browser.contextErr != nil {
+		t.Errorf("scraper context error = %v, want independent active context", browser.contextErr)
+	}
+	runs, err := store.LatestRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != storage.RunStatusSuccess {
+		t.Errorf("runs after canceled request = %#v, want one successful run", runs)
+	}
+}
+
+func TestManualSourceRunTimeoutReturnsGatewayTimeoutAndPersistsDiagnostic(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "vacancies.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	browser := &deadlineWaitingBrowser{}
+	handler := NewWithRunTimeout(store, dryrun.New(browser, time.Minute), browser, 10*time.Millisecond)
+	source := createHTMLRunSource(t, store, "source-1", "example", "Example jobs")
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/sources/"+source.ID+"/run", nil))
+
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("POST /api/sources/:id/run after deadline = %d, want 504: %s", recorder.Code, recorder.Body.String())
+	}
+	runs, err := store.LatestRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs after timeout = %#v, want one", runs)
+	}
+	if runs[0].Status != storage.RunStatusFailed || !strings.Contains(runs[0].ErrorMessage, context.DeadlineExceeded.Error()) {
+		t.Errorf("timed out run = %#v, want failed diagnostic containing %q", runs[0], context.DeadlineExceeded)
+	}
+	updatedSource, err := store.GetSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedSource.Status != storage.SourceStatusFailed || !strings.Contains(updatedSource.LastError, context.DeadlineExceeded.Error()) {
+		t.Errorf("timed out source = %#v, want failed diagnostic containing %q", updatedSource, context.DeadlineExceeded)
+	}
+}
+
 func createHTMLRunSource(t *testing.T, store *storage.Store, id, slug, name string) storage.Source {
 	t.Helper()
 	source, err := store.CreateSource(context.Background(), storage.NewSource{
@@ -156,6 +224,25 @@ func createHTMLRunSource(t *testing.T, store *storage.Store, id, slug, name stri
 type queryRecordingBrowser struct {
 	query            string
 	usedLegacyScrape bool
+}
+
+type contextRecordingBrowser struct {
+	contextErr error
+}
+
+func (b *contextRecordingBrowser) Scrape(ctx context.Context, _ config.Source) (scraper.Result, error) {
+	b.contextErr = ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return scraper.Result{}, err
+	}
+	return scraper.Result{Vacancies: []scraper.Vacancy{{Title: "Role", Link: "https://example.test/jobs/1"}}}, nil
+}
+
+type deadlineWaitingBrowser struct{}
+
+func (deadlineWaitingBrowser) Scrape(ctx context.Context, _ config.Source) (scraper.Result, error) {
+	<-ctx.Done()
+	return scraper.Result{}, ctx.Err()
 }
 
 func (b *queryRecordingBrowser) Scrape(context.Context, config.Source) (scraper.Result, error) {

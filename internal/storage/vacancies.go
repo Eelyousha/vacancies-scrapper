@@ -58,7 +58,10 @@ func (s *Store) ApplyObservedVacancies(ctx context.Context, runID string, observ
 			return VacancyDelta{}, err
 		}
 		if _, duplicate := seen[identityKey]; duplicate {
-			return VacancyDelta{}, fmt.Errorf("duplicate vacancy identity %q", identityKey)
+			// A page can expose the same vacancy in more than one card (for
+			// example, in a promoted section and in the regular list). Preserve
+			// the first card in document order so the result is deterministic.
+			continue
 		}
 		seen[identityKey] = struct{}{}
 

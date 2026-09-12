@@ -40,6 +40,8 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 21 | Поисковая фраза пользователя при ручном запуске | `выполнено` | [запись](implementation/2026-09-12-manual-search-query.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 22 | Расширение README по возможностям проекта | `выполнено` | [запись](implementation/2026-09-12-readme-capabilities-refresh.md); проверка ссылок, Markdown и `git diff --check` |
 | 23 | Поддержка относительного пути SQLite | `выполнено` | [запись](implementation/2026-09-12-relative-sqlite-path.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 24 | Независимый контекст и timeout ручного запуска | `выполнено` | [запись](implementation/2026-09-12-manual-run-context-and-timeout.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 25 | Дедупликация наблюдений и восстановление прерванного запуска | `выполнено` | [запись](implementation/2026-09-12-observation-deduplication-and-run-recovery.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 
 ## Как обновлять
 

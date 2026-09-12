@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenCreatesInitialSchema(t *testing.T) {
@@ -59,6 +60,48 @@ func TestOpenAppliesMigrationsOnlyOnce(t *testing.T) {
 	}
 	if migrationCount != 2 {
 		t.Errorf("applied migrations = %d, want 2", migrationCount)
+	}
+}
+
+func TestOpenRecoversInterruptedRunningRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vacancies.db")
+	store, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("first Open(): %v", err)
+	}
+	source := createTestSource(t, store, "source-1", "example")
+	if _, err := store.StartExclusiveRun(context.Background(), NewRun{ID: "interrupted-run", SourceID: source.ID, StartedAt: time.Now()}); err != nil {
+		t.Fatalf("StartExclusiveRun(): %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store with running run: %v", err)
+	}
+
+	reopened, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reopen database: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.RecoverInterruptedRuns(context.Background()); err != nil {
+		t.Fatalf("RecoverInterruptedRuns(): %v", err)
+	}
+
+	run, err := reopened.LastRun(context.Background(), source.ID)
+	if err != nil {
+		t.Fatalf("LastRun() after recovery: %v", err)
+	}
+	if run.Status != RunStatusFailed || run.CompletionStatus != CompletionStatusUnknown || run.FinishedAt.IsZero() || !strings.Contains(run.ErrorMessage, "interrupted") {
+		t.Errorf("recovered run = %#v, want failed interrupted run with a completion timestamp", run)
+	}
+	recoveredSource, err := reopened.GetSource(context.Background(), source.ID)
+	if err != nil {
+		t.Fatalf("GetSource() after recovery: %v", err)
+	}
+	if recoveredSource.Status != SourceStatusFailed || !strings.Contains(recoveredSource.LastError, "interrupted") {
+		t.Errorf("recovered source = %#v, want failed source with interruption diagnostic", recoveredSource)
+	}
+	if _, err := reopened.StartExclusiveRun(context.Background(), NewRun{ID: "next-run", SourceID: source.ID, StartedAt: time.Now()}); err != nil {
+		t.Errorf("StartExclusiveRun() after recovery: %v", err)
 	}
 }
 

@@ -132,6 +132,55 @@ func TestApplyObservedVacanciesUsesFallbackIdentityForDynamicURLs(t *testing.T) 
 	}
 }
 
+func TestApplyObservedVacanciesDeduplicatesRepeatedIdentityWithinRun(t *testing.T) {
+	ctx := context.Background()
+	for _, testCase := range []struct {
+		name     string
+		observed []ObservedVacancy
+	}{
+		{
+			name: "canonical URL",
+			observed: []ObservedVacancy{
+				{Title: "Dispatcher", Company: "Example", Link: "https://example.test/jobs/1?utm_source=card"},
+				{Title: "Dispatcher duplicate", Company: "Another", Link: "https://example.test/jobs/1"},
+			},
+		},
+		{
+			name: "fallback fingerprint",
+			observed: []ObservedVacancy{
+				{Title: "Dispatcher", Company: "Example", Link: "https://example.test/jobs/1", IdentityFields: []string{"title", "company"}},
+				{Title: "Dispatcher", Company: "Example", Link: "https://example.test/jobs/2", IdentityFields: []string{"title", "company"}},
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := openTestStore(t)
+			defer store.Close()
+			source := createTestSource(t, store, "source-1", "example")
+			run := startTestRun(t, store, "run-1", source.ID)
+
+			delta, err := store.ApplyObservedVacancies(ctx, run.ID, testCase.observed)
+			if err != nil {
+				t.Fatalf("ApplyObservedVacancies(): %v", err)
+			}
+			if delta != (VacancyDelta{AddedCount: 1}) {
+				t.Errorf("delta = %#v, want one added vacancy", delta)
+			}
+
+			var vacancies, runVacancies int
+			if err := store.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM vacancies WHERE source_id = ?", source.ID).Scan(&vacancies); err != nil {
+				t.Fatalf("count vacancies: %v", err)
+			}
+			if err := store.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scraping_run_vacancies WHERE run_id = ?", run.ID).Scan(&runVacancies); err != nil {
+				t.Fatalf("count run vacancies: %v", err)
+			}
+			if vacancies != 1 || runVacancies != 1 {
+				t.Errorf("persisted vacancies/run-vacancies = %d/%d, want 1/1", vacancies, runVacancies)
+			}
+		})
+	}
+}
+
 func TestApplyObservedVacanciesReactivatesArchivedVacancy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
