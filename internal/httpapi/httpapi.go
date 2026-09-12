@@ -21,10 +21,11 @@ import (
 	"vacancies-scrapper/internal/storage"
 )
 
-//go:embed templates/dashboard.html static/app.css
+//go:embed templates/dashboard.html templates/source_builder.html static/app.css
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "templates/dashboard.html"))
+var sourceBuilderTemplate = template.Must(template.ParseFS(dashboardAssets, "templates/source_builder.html"))
 
 type API struct {
 	store   *storage.Store
@@ -37,6 +38,9 @@ func New(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper) http
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", a.dashboard)
 	mux.HandleFunc("GET /static/app.css", a.dashboardCSS)
+	mux.HandleFunc("GET /sources", a.sourceBuilder)
+	mux.HandleFunc("POST /sources/test", a.testSourceBuilder)
+	mux.HandleFunc("POST /sources", a.createSourceBuilder)
 	mux.HandleFunc("POST /api/sources/test-config", a.testConfig)
 	mux.HandleFunc("POST /api/sources", a.createSource)
 	mux.HandleFunc("GET /api/sources", a.listSources)
@@ -67,6 +71,18 @@ type dashboardData struct {
 	Runs      []dashboardRun
 	Total     int
 	Filter    storage.VacancyFilter
+}
+
+// sourceBuilderData holds exactly the submitted YAML because dry-run tokens are
+// intentionally bound to its bytes, rather than to a parsed representation.
+type sourceBuilderData struct {
+	Slug      string
+	Name      string
+	YAML      string
+	TestToken string
+	ExpiresAt time.Time
+	Preview   []scraper.Vacancy
+	Error     string
 }
 
 // dashboard reads directly from storage so the local UI does not depend on its
@@ -124,6 +140,75 @@ func (a *API) dashboardCSS(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	_, _ = w.Write(stylesheet)
+}
+
+func (a *API) sourceBuilder(w http.ResponseWriter, _ *http.Request) {
+	a.renderSourceBuilder(w, http.StatusOK, sourceBuilderData{})
+}
+
+func (a *API) testSourceBuilder(w http.ResponseWriter, r *http.Request) {
+	form, err := sourceBuilderForm(r)
+	if err != nil {
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
+		return
+	}
+	result, err := a.dry.Test(r.Context(), []byte(form.YAML))
+	if err != nil {
+		form.Error = err.Error()
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		return
+	}
+	form.TestToken = result.Token
+	form.ExpiresAt = result.ExpiresAt
+	form.Preview = result.Preview
+	a.renderSourceBuilder(w, http.StatusOK, form)
+}
+
+func (a *API) createSourceBuilder(w http.ResponseWriter, r *http.Request) {
+	form, err := sourceBuilderForm(r)
+	if err != nil {
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
+		return
+	}
+	source, err := config.Parse([]byte(form.YAML))
+	if err != nil {
+		form.Error = err.Error()
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		return
+	}
+	if err = a.dry.ConsumeToken([]byte(form.YAML), source.BaseURL, form.TestToken); err != nil {
+		form.Error = err.Error()
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		return
+	}
+	name := form.Name
+	if name == "" {
+		name = source.SiteName
+	}
+	if _, err = a.store.CreateSource(r.Context(), storage.NewSource{
+		ID: uuid.NewString(), Slug: form.Slug, Name: name, ConfigYAML: form.YAML, IsActive: true,
+	}); err != nil {
+		form.Error = err.Error()
+		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func sourceBuilderForm(r *http.Request) (sourceBuilderData, error) {
+	if err := r.ParseForm(); err != nil {
+		return sourceBuilderData{}, err
+	}
+	return sourceBuilderData{
+		Slug: r.PostForm.Get("slug"), Name: r.PostForm.Get("name"), YAML: r.PostForm.Get("yaml"),
+		TestToken: r.PostForm.Get("test_token"),
+	}, nil
+}
+
+func (a *API) renderSourceBuilder(w http.ResponseWriter, status int, data sourceBuilderData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = sourceBuilderTemplate.Execute(w, data)
 }
 func (a *API) listSources(w http.ResponseWriter, r *http.Request) {
 	values, err := a.store.ListSources(r.Context())

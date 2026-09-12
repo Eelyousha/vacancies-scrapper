@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Новый источник</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="layout narrow">
+    <header class="page-header">
+      <div>
+        <h1>Новый источник</h1>
+        <p class="muted">Проверьте YAML в dry run, затем сохраните источник.</p>
+      </div>
+      <a class="button secondary" href="/">К вакансиям</a>
+    </header>
+
+    {{if .Error}}<p class="notice error" role="alert">{{.Error}}</p>{{end}}
+
+    <form class="source-form" method="post" action="/sources/test">
+      <label>Slug
+        <input name="slug" value="{{.Slug}}" required placeholder="example-jobs">
+      </label>
+      <label>Название источника
+        <input name="name" value="{{.Name}}" placeholder="По умолчанию — site_name из YAML">
+      </label>
+      <label>YAML-конфигурация
+        <textarea name="yaml" rows="20" required spellcheck="false" placeholder="site_name: Example&#10;base_url: https://example.test/jobs">{{.YAML}}</textarea>
+      </label>
+      {{if .TestToken}}<input type="hidden" name="test_token" value="{{.TestToken}}">{{end}}
+      <div class="form-actions">
+        <button type="submit" formaction="/sources/test">Проверить dry run</button>
+        {{if .TestToken}}<button type="submit" formaction="/sources">Сохранить источник</button>{{end}}
+      </div>
+    </form>
+
+    {{if .TestToken}}
+    <section aria-labelledby="preview-heading">
+      <h2 id="preview-heading">Превью вакансий</h2>
+      <p class="muted">Проверка действительна до {{.ExpiresAt.Local.Format "02.01.2006 15:04"}} и используется один раз.</p>
+      <div class="vacancies">
+        {{range .Preview}}
+        <article class="vacancy">
+          <div>
+            <h3>{{if .Link}}<a href="{{.Link}}" rel="noreferrer">{{.Title}}</a>{{else}}{{.Title}}{{end}}</h3>
+            {{if .Company}}<p>{{.Company}}</p>{{end}}
+          </div>
+          {{if .Salary}}<div class="details"><span>{{.Salary}}</span></div>{{end}}
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </main>
+</body>
+</html>

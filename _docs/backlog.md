@@ -33,6 +33,7 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 14 | Актуализация корневой и документационной точек входа | `выполнено` | [запись](implementation/2026-09-07-readme-refresh.md); проверка ссылок, Markdown и `git diff --check` |
 | 15 | Надёжность lifecycle запусков и JSON-контракта backend | `выполнено` | [запись](implementation/2026-09-12-backend-lifecycle-and-api-contract.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 16 | Dashboard ленты вакансий и сводки запусков | `выполнено` | [запись](implementation/2026-09-12-dashboard-vacancies-and-runs.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 17 | Ядро конструктора источника: dry run и сохранение YAML | `выполнено` | [запись](implementation/2026-09-12-source-builder-dry-run.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 
 ## Как обновлять
 

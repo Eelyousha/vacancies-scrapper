@@ -8,9 +8,12 @@
 </head>
 <body>
   <main class="layout">
-    <header>
-      <h1>Вакансии</h1>
-      <p class="muted">Найдено: {{.Total}}</p>
+    <header class="page-header">
+      <div>
+        <h1>Вакансии</h1>
+        <p class="muted">Найдено: {{.Total}}</p>
+      </div>
+      <a class="button" href="/sources">Новый источник</a>
     </header>
 
     <form class="filters" method="get" action="/">
