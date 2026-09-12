@@ -41,3 +41,4 @@
 * [2026-09-12 — надёжность lifecycle и JSON-контракт backend](2026-09-12-backend-lifecycle-and-api-contract.md) — выполнено.
 * [2026-09-12 — dashboard вакансий и запусков](2026-09-12-dashboard-vacancies-and-runs.md) — выполнено.
 * [2026-09-12 — конструктор источника: dry run и сохранение YAML](2026-09-12-source-builder-dry-run.md) — выполнено.
+* [2026-09-12 — список источников и ручной запуск](2026-09-12-source-list-and-manual-run.md) — выполнено.

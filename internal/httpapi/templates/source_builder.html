@@ -52,6 +52,29 @@
       </div>
     </section>
     {{end}}
+
+    <section aria-labelledby="sources-heading">
+      <h2 id="sources-heading">Сохранённые источники</h2>
+      {{if .Sources}}
+      <div class="sources">
+        {{range .Sources}}
+        <article class="source">
+          <div>
+            <h3>{{.Name}}</h3>
+            <p>Последний запуск: {{.LastRunAtText}}</p>
+            {{if .LastError}}<p class="source-error">Ошибка: {{.LastError}}</p>{{end}}
+          </div>
+          <div class="source-actions">
+            <span class="badge">{{.Status}}</span>
+            <form method="post" action="/sources/{{.ID}}/run">
+              <button type="submit">Запустить</button>
+            </form>
+          </div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}<p class="empty">Сохранённых источников пока нет.</p>{{end}}
+    </section>
   </main>
 </body>
 </html>

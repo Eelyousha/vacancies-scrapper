@@ -41,6 +41,7 @@ func New(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper) http
 	mux.HandleFunc("GET /sources", a.sourceBuilder)
 	mux.HandleFunc("POST /sources/test", a.testSourceBuilder)
 	mux.HandleFunc("POST /sources", a.createSourceBuilder)
+	mux.HandleFunc("POST /sources/{id}/run", a.runSourceBuilder)
 	mux.HandleFunc("POST /api/sources/test-config", a.testConfig)
 	mux.HandleFunc("POST /api/sources", a.createSource)
 	mux.HandleFunc("GET /api/sources", a.listSources)
@@ -83,6 +84,15 @@ type sourceBuilderData struct {
 	ExpiresAt time.Time
 	Preview   []scraper.Vacancy
 	Error     string
+	Sources   []sourceBuilderSource
+}
+
+// sourceBuilderSource adds presentation-only data to the persistent source.
+// In particular, a zero LastRunAt should be shown as an understandable state,
+// rather than as Go's zero timestamp.
+type sourceBuilderSource struct {
+	storage.Source
+	LastRunAtText string
 }
 
 // dashboard reads directly from storage so the local UI does not depend on its
@@ -142,43 +152,43 @@ func (a *API) dashboardCSS(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(stylesheet)
 }
 
-func (a *API) sourceBuilder(w http.ResponseWriter, _ *http.Request) {
-	a.renderSourceBuilder(w, http.StatusOK, sourceBuilderData{})
+func (a *API) sourceBuilder(w http.ResponseWriter, r *http.Request) {
+	a.renderSourceBuilder(w, r, http.StatusOK, sourceBuilderData{})
 }
 
 func (a *API) testSourceBuilder(w http.ResponseWriter, r *http.Request) {
 	form, err := sourceBuilderForm(r)
 	if err != nil {
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
 		return
 	}
 	result, err := a.dry.Test(r.Context(), []byte(form.YAML))
 	if err != nil {
 		form.Error = err.Error()
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, form)
 		return
 	}
 	form.TestToken = result.Token
 	form.ExpiresAt = result.ExpiresAt
 	form.Preview = result.Preview
-	a.renderSourceBuilder(w, http.StatusOK, form)
+	a.renderSourceBuilder(w, r, http.StatusOK, form)
 }
 
 func (a *API) createSourceBuilder(w http.ResponseWriter, r *http.Request) {
 	form, err := sourceBuilderForm(r)
 	if err != nil {
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, sourceBuilderData{Error: err.Error()})
 		return
 	}
 	source, err := config.Parse([]byte(form.YAML))
 	if err != nil {
 		form.Error = err.Error()
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, form)
 		return
 	}
 	if err = a.dry.ConsumeToken([]byte(form.YAML), source.BaseURL, form.TestToken); err != nil {
 		form.Error = err.Error()
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, form)
 		return
 	}
 	name := form.Name
@@ -189,10 +199,19 @@ func (a *API) createSourceBuilder(w http.ResponseWriter, r *http.Request) {
 		ID: uuid.NewString(), Slug: form.Slug, Name: name, ConfigYAML: form.YAML, IsActive: true,
 	}); err != nil {
 		form.Error = err.Error()
-		a.renderSourceBuilder(w, http.StatusUnprocessableEntity, form)
+		a.renderSourceBuilder(w, r, http.StatusUnprocessableEntity, form)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *API) runSourceBuilder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, status, err := a.executeSourceRun(r.Context(), id); err != nil {
+		a.renderSourceBuilder(w, r, status, sourceBuilderData{Error: err.Error()})
+		return
+	}
+	http.Redirect(w, r, "/?source_id="+id, http.StatusSeeOther)
 }
 
 func sourceBuilderForm(r *http.Request) (sourceBuilderData, error) {
@@ -205,7 +224,21 @@ func sourceBuilderForm(r *http.Request) (sourceBuilderData, error) {
 	}, nil
 }
 
-func (a *API) renderSourceBuilder(w http.ResponseWriter, status int, data sourceBuilderData) {
+func (a *API) renderSourceBuilder(w http.ResponseWriter, r *http.Request, status int, data sourceBuilderData) {
+	sources, err := a.store.ListSources(r.Context())
+	if err != nil {
+		status = http.StatusInternalServerError
+		data.Error = err.Error()
+	} else {
+		data.Sources = make([]sourceBuilderSource, 0, len(sources))
+		for _, source := range sources {
+			lastRunAtText := "ещё не запускался"
+			if !source.LastRunAt.IsZero() {
+				lastRunAtText = source.LastRunAt.Local().Format("02.01.2006 15:04")
+			}
+			data.Sources = append(data.Sources, sourceBuilderSource{Source: source, LastRunAtText: lastRunAtText})
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = sourceBuilderTemplate.Execute(w, data)
@@ -415,45 +448,51 @@ func (a *API) updateSource(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) runSource(w http.ResponseWriter, r *http.Request) {
 	id := sourceID(r.URL.Path)
-	source, err := a.store.GetSource(r.Context(), id)
+	completed, status, err := a.executeSourceRun(r.Context(), id)
 	if err != nil {
-		fail(w, 404, err)
+		fail(w, status, err)
 		return
+	}
+	reply(w, http.StatusOK, completed)
+}
+
+// executeSourceRun is the single synchronous lifecycle for API and HTML manual
+// runs. Keeping the two entry points here prevents either one from bypassing
+// exclusive-start locking or leaving a source marked running after a failure.
+func (a *API) executeSourceRun(ctx context.Context, id string) (storage.Run, int, error) {
+	source, err := a.store.GetSource(ctx, id)
+	if err != nil {
+		return storage.Run{}, http.StatusNotFound, err
 	}
 	cfg, err := config.Parse([]byte(source.ConfigYAML))
 	if err != nil {
-		fail(w, 422, err)
-		return
+		return storage.Run{}, http.StatusUnprocessableEntity, err
 	}
-	run, err := a.store.StartExclusiveRun(r.Context(), storage.NewRun{ID: uuid.NewString(), SourceID: id, StartedAt: time.Now().UTC()})
+	run, err := a.store.StartExclusiveRun(ctx, storage.NewRun{ID: uuid.NewString(), SourceID: id, StartedAt: time.Now().UTC()})
 	if errors.Is(err, storage.ErrInvalidTransition) {
-		fail(w, 409, err)
-		return
+		return storage.Run{}, http.StatusConflict, err
 	}
 	if err != nil {
-		fail(w, 500, err)
-		return
+		return storage.Run{}, http.StatusInternalServerError, err
 	}
-	result, err := a.scraper.Scrape(r.Context(), cfg)
+	result, err := a.scraper.Scrape(ctx, cfg)
 	logger := runlog.New(a.store)
 	if err != nil {
 		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
-		fail(w, 502, err)
-		return
+		return storage.Run{}, http.StatusBadGateway, err
 	}
 	result.FinishedAt = time.Now().UTC()
 	var fields []string
 	if cfg.Identity != nil {
 		fields = cfg.Identity.FallbackFields
 	}
-	completed, err := logger.Finish(r.Context(), run.ID, result, fields, storage.CompletionStatusComplete)
+	completed, err := logger.Finish(ctx, run.ID, result, fields, storage.CompletionStatusComplete)
 	if err != nil {
 		// A failed persistence step must not leave the source locked in running.
 		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
-		fail(w, 500, err)
-		return
+		return storage.Run{}, http.StatusInternalServerError, err
 	}
-	reply(w, 200, completed)
+	return completed, http.StatusOK, nil
 }
 
 var _ dryrun.Scraper = scraper.Scraper{}
