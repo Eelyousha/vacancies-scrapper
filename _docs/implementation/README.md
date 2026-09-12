@@ -52,3 +52,4 @@
 * [2026-09-12 — модуль планирования повторных обходов](2026-09-12-revisit-planning-module.md) — выполнено.
 * [2026-09-12 — кнопки запуска источников на dashboard](2026-09-12-dashboard-source-run-buttons.md) — выполнено.
 * [2026-09-12 — сверка документации с реализованным MVP](2026-09-12-documentation-consistency-audit.md) — выполнено.
+* [2026-09-12 — смена статуса вакансии на dashboard](2026-09-12-dashboard-vacancy-status-actions.md) — выполнено.

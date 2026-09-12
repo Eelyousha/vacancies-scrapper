@@ -45,6 +45,7 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 26 | Модуль планирования повторных обходов | `выполнено` | [запись](implementation/2026-09-12-revisit-planning-module.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 27 | Кнопки запуска источников на dashboard | `выполнено` | [запись](implementation/2026-09-12-dashboard-source-run-buttons.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 28 | Сверка документации с реализованным MVP | `выполнено` | [запись](implementation/2026-09-12-documentation-consistency-audit.md); проверка Markdown-ссылок и `git diff --check` |
+| 29 | Смена пользовательского статуса вакансии на dashboard | `выполнено` | [запись](implementation/2026-09-12-dashboard-vacancy-status-actions.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 
 ## Как обновлять
 

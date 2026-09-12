@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,7 @@ func NewWithRunTimeout(store *storage.Store, dry *dryrun.Service, browser dryrun
 	mux.HandleFunc("POST /sources/test", a.testSourceBuilder)
 	mux.HandleFunc("POST /sources", a.createSourceBuilder)
 	mux.HandleFunc("POST /sources/{id}/run", a.runSourceBuilder)
+	mux.HandleFunc("POST /vacancies/{id}/status", a.updateDashboardVacancyStatus)
 	mux.HandleFunc("POST /api/sources/test-config", a.testConfig)
 	mux.HandleFunc("POST /api/sources", a.createSource)
 	mux.HandleFunc("GET /api/sources", a.listSources)
@@ -91,6 +93,7 @@ type dashboardData struct {
 	Runs      []dashboardRun
 	Total     int
 	Filter    storage.VacancyFilter
+	Query     string
 }
 
 // sourceBuilderData holds exactly the submitted YAML because dry-run tokens are
@@ -143,7 +146,7 @@ func (a *API) dashboard(w http.ResponseWriter, r *http.Request) {
 	for _, source := range sources {
 		sourceNames[source.ID] = source.Name
 	}
-	data := dashboardData{Sources: sources, Total: total, Filter: filter}
+	data := dashboardData{Sources: sources, Total: total, Filter: filter, Query: r.URL.RawQuery}
 	for _, item := range items {
 		data.Vacancies = append(data.Vacancies, dashboardVacancy{Vacancy: item, SourceName: sourceNames[item.SourceID]})
 	}
@@ -339,6 +342,37 @@ func (a *API) updateVacancy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, 200, updated)
+}
+
+// updateDashboardVacancyStatus is the HTML counterpart to updateVacancy. The
+// status values are validated by storage, keeping both interfaces consistent.
+func (a *API) updateDashboardVacancyStatus(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		fail(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	if _, err := a.store.UpdateVacancyUserStatus(r.Context(), r.PathValue("id"), r.PostForm.Get("user_status")); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			fail(w, http.StatusNotFound, err)
+			return
+		}
+		fail(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+
+	returnQuery := r.PostForm.Get("return_query")
+	if returnQuery == "" {
+		returnQuery = r.URL.RawQuery
+	}
+	if _, err := url.ParseQuery(returnQuery); err != nil {
+		fail(w, http.StatusUnprocessableEntity, fmt.Errorf("parse dashboard return query: %w", err))
+		return
+	}
+	location := "/"
+	if returnQuery != "" {
+		location += "?" + returnQuery
+	}
+	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 func (a *API) latestRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := a.store.LatestRuns(r.Context())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -107,6 +108,121 @@ func TestDashboardUserStatusFilterLimitsVacanciesAndKeepsSelection(t *testing.T)
 	if !selectedViewed.MatchString(body) {
 		t.Errorf("dashboard does not preserve user_status=viewed as selected: %s", body)
 	}
+}
+
+func TestDashboardRendersUserStatusActionsForOtherStatuses(t *testing.T) {
+	ctx := context.Background()
+	handler, store := sourceBuilderHandler(t)
+	vacancy := createDashboardVacancy(t, store, "status-actions", "Status actions vacancy")
+	if _, err := store.UpdateVacancyUserStatus(ctx, vacancy.ID, "viewed"); err != nil {
+		t.Fatalf("set initial user status: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?user_status=viewed", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET dashboard = %d: %s", response.Code, response.Body.String())
+	}
+
+	pattern := `(?s)<article class="vacancy">.*?Status actions vacancy.*?</article>`
+	card := regexp.MustCompile(pattern).FindString(response.Body.String())
+	if card == "" {
+		t.Fatalf("dashboard has no card for status-actions vacancy: %s", response.Body.String())
+	}
+	for _, status := range []string{"new", "hidden"} {
+		if !regexp.MustCompile(`(?s)<form[^>]*method="post"[^>]*action="/vacancies/` + regexp.QuoteMeta(vacancy.ID) + `/status[^\"]*"[^>]*>.*?name="user_status"[^>]*value="` + status + `"`).MatchString(card) {
+			t.Errorf("dashboard has no POST action to set user_status=%q: %s", status, card)
+		}
+	}
+	if strings.Contains(card, `name="user_status" value="viewed"`) {
+		t.Errorf("dashboard renders an action for already selected user_status: %s", card)
+	}
+}
+
+func TestDashboardVacancyStatusActionUpdatesStatusAndKeepsFilters(t *testing.T) {
+	ctx := context.Background()
+	handler, store := sourceBuilderHandler(t)
+	vacancy := createDashboardVacancy(t, store, "status-update", "Status update vacancy")
+
+	query := url.Values{
+		"limit": {"10"}, "listing_status": {"active"}, "offset": {"20"},
+		"search": {"Go role"}, "source_id": {"status-update"}, "user_status": {"new"},
+	}
+	response := serveSourceBuilderForm(handler, "/vacancies/"+vacancy.ID+"/status?"+query.Encode(), url.Values{"user_status": {"hidden"}})
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("POST vacancy status = %d, want 303: %s", response.Code, response.Body.String())
+	}
+	if location := response.Header().Get("Location"); location != "/?"+query.Encode() {
+		t.Errorf("POST vacancy status Location = %q, want dashboard filters %q", location, "/?"+query.Encode())
+	}
+	updated, err := dashboardVacancyByID(ctx, store, vacancy.ID)
+	if err != nil {
+		t.Fatalf("read updated vacancy: %v", err)
+	}
+	if updated.UserStatus != "hidden" {
+		t.Errorf("vacancy user_status = %q, want hidden", updated.UserStatus)
+	}
+}
+
+func TestDashboardVacancyStatusActionRejectsInvalidStatusWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	handler, store := sourceBuilderHandler(t)
+	vacancy := createDashboardVacancy(t, store, "status-invalid", "Status invalid vacancy")
+
+	response := serveSourceBuilderForm(handler, "/vacancies/"+vacancy.ID+"/status", url.Values{"user_status": {"invalid"}})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("POST invalid vacancy status = %d, want 422: %s", response.Code, response.Body.String())
+	}
+	unchanged, err := dashboardVacancyByID(ctx, store, vacancy.ID)
+	if err != nil {
+		t.Fatalf("read vacancy after invalid update: %v", err)
+	}
+	if unchanged.UserStatus != "new" {
+		t.Errorf("invalid status mutation: user_status = %q, want new", unchanged.UserStatus)
+	}
+}
+
+func dashboardVacancyByID(ctx context.Context, store *storage.Store, id string) (storage.Vacancy, error) {
+	items, _, err := store.ListVacancies(ctx, storage.VacancyFilter{Limit: 100})
+	if err != nil {
+		return storage.Vacancy{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return storage.Vacancy{}, storage.ErrNotFound
+}
+
+func createDashboardVacancy(t *testing.T, store *storage.Store, sourceID, title string) storage.Vacancy {
+	t.Helper()
+	ctx := context.Background()
+	source, err := store.CreateSource(ctx, storage.NewSource{
+		ID: sourceID, Slug: sourceID, Name: sourceID, ConfigYAML: string(validYAML()), IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	run, err := store.StartRun(ctx, storage.NewRun{ID: source.ID + "-run", SourceID: source.ID, StartedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if _, err := store.ApplyObservedVacancies(ctx, run.ID, []storage.ObservedVacancy{{
+		Title: title, Company: "Example", Link: "https://example.test/jobs/" + source.ID,
+	}}); err != nil {
+		t.Fatalf("persist vacancy: %v", err)
+	}
+	if _, err := store.CompleteRun(ctx, storage.CompleteRun{
+		ID: run.ID, Status: storage.RunStatusSuccess, CompletionStatus: storage.CompletionStatusComplete, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("complete run: %v", err)
+	}
+	items, _, err := store.ListVacancies(ctx, storage.VacancyFilter{SourceID: source.ID, Limit: 1})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("list created vacancy = %#v, %v", items, err)
+	}
+	return items[0]
 }
 
 func TestDashboardStylesheetIsLocalAndDashboardHasNoCDNURLs(t *testing.T) {

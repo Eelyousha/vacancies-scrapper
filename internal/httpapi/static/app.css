@@ -13,7 +13,7 @@ label { display: grid; gap: 0.3rem; font-size: 0.9rem; font-weight: 600; }
 input, select, button { min-height: 2.3rem; padding: 0.45rem 0.6rem; border: 1px solid #b7c2d4; border-radius: 0.35rem; font: inherit; }
 button { cursor: pointer; border-color: #255bc5; color: #fff; background: #255bc5; }
 .button { display: inline-flex; align-items: center; justify-content: center; min-height: 2.3rem; padding: 0.45rem 0.6rem; border: 1px solid #255bc5; border-radius: 0.35rem; color: #fff; background: #255bc5; text-decoration: none; white-space: nowrap; }
-.button.secondary { border-color: #b7c2d4; color: #34415a; background: #fff; }
+.button.secondary, button.secondary { border-color: #b7c2d4; color: #34415a; background: #fff; }
 .source-form { display: grid; gap: 1rem; padding: 1rem; background: #fff; border: 1px solid #dce2ed; border-radius: 0.7rem; }
 textarea { width: 100%; min-height: 12rem; padding: 0.6rem; border: 1px solid #b7c2d4; border-radius: 0.35rem; font: 0.9rem ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
@@ -25,6 +25,8 @@ textarea { width: 100%; min-height: 12rem; padding: 0.6rem; border: 1px solid #b
 .vacancy p { margin-bottom: 0; color: #5d687a; }
 .details, .run { align-items: center; flex-wrap: wrap; }
 .details { display: flex; gap: 0.45rem; }
+.vacancy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+.vacancy-actions form { margin: 0; }
 .badge { padding: 0.2rem 0.45rem; border-radius: 999px; color: #34415a; background: #e8edf6; font-size: 0.82rem; white-space: nowrap; }
 .source h3 { margin-bottom: 0.25rem; font-size: 1.05rem; }
 .source p { margin-bottom: 0; color: #5d687a; }

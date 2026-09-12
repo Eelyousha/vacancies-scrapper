@@ -78,6 +78,29 @@
             <span class="badge">{{.ListingStatus}}</span>
             <span class="badge">{{.UserStatus}}</span>
           </div>
+          <div class="vacancy-actions" aria-label="Изменить мой статус вакансии">
+            {{if ne .UserStatus "new"}}
+            <form method="post" action="/vacancies/{{.ID}}/status">
+              <input type="hidden" name="user_status" value="new">
+              <input type="hidden" name="return_query" value="{{$.Query}}">
+              <button class="secondary" type="submit">Новая</button>
+            </form>
+            {{end}}
+            {{if ne .UserStatus "viewed"}}
+            <form method="post" action="/vacancies/{{.ID}}/status">
+              <input type="hidden" name="user_status" value="viewed">
+              <input type="hidden" name="return_query" value="{{$.Query}}">
+              <button class="secondary" type="submit">Просмотрена</button>
+            </form>
+            {{end}}
+            {{if ne .UserStatus "hidden"}}
+            <form method="post" action="/vacancies/{{.ID}}/status">
+              <input type="hidden" name="user_status" value="hidden">
+              <input type="hidden" name="return_query" value="{{$.Query}}">
+              <button class="secondary" type="submit">Скрыта</button>
+            </form>
+            {{end}}
+          </div>
         </article>
         {{end}}
       </div>
