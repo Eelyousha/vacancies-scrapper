@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andybalholm/cascadia"
 	"gopkg.in/yaml.v3"
 )
 
@@ -154,11 +155,11 @@ func Parse(data []byte) (Source, error) {
 	return source, nil
 }
 
-// Validate проверяет обязательные поля и числовые ограничения, доступные без
-// обращения к сайту. Семантическая проверка селекторов выполняется dry run-ом.
+// Validate проверяет обязательные поля, синтаксис CSS-селекторов и числовые
+// ограничения, доступные без обращения к сайту.
 func (s Source) Validate() error {
 	// Проверяются только инварианты, которые можно установить без браузера.
-	// Корректность CSS-селекторов и наличие данных проверяются dry run-ом.
+	// Dry run по-прежнему нужен для проверки наличия элементов и данных на сайте.
 	if strings.TrimSpace(s.SiteName) == "" {
 		return fmt.Errorf("site_name is required")
 	}
@@ -181,6 +182,9 @@ func (s Source) Validate() error {
 	if err := validateIdentity(s.Identity); err != nil {
 		return err
 	}
+	if err := validateCSSSelectors(s); err != nil {
+		return err
+	}
 	if s.Pagination == nil {
 		return nil
 	}
@@ -192,6 +196,58 @@ func (s Source) Validate() error {
 	}
 	if s.Pagination.MaxIterations <= 0 {
 		return fmt.Errorf("pagination.max_iterations must be greater than zero")
+	}
+	return nil
+}
+
+// validateCSSSelectors компилирует каждый заданный селектор до запуска
+// браузера, чтобы опечатка в YAML не тратила ресурсы dry run-а или запуска.
+func validateCSSSelectors(source Source) error {
+	selectors := []struct {
+		field string
+		value string
+	}{
+		{"page.wait_for_selector", source.Page.WaitForSelector},
+		{"selectors.container", source.Selectors.Container},
+		{"selectors.card", source.Selectors.Card},
+		{"selectors.title", source.Selectors.Title},
+		{"selectors.company", source.Selectors.Company},
+		{"selectors.salary", source.Selectors.Salary},
+		{"selectors.link", source.Selectors.Link},
+		{"selectors.description", source.Selectors.Description},
+	}
+
+	if source.Pagination != nil {
+		selectors = append(selectors,
+			struct{ field, value string }{"pagination.action_selector", source.Pagination.ActionSelector},
+			struct{ field, value string }{"pagination.stop_conditions.no_more_results_selector", source.Pagination.StopConditions.NoMoreResultsSelector},
+			struct{ field, value string }{"pagination.stop_conditions.button_disabled_selector", source.Pagination.StopConditions.ButtonDisabledSelector},
+		)
+	}
+	if source.DetailPage != nil {
+		detail := source.DetailPage
+		selectors = append(selectors,
+			struct{ field, value string }{"detail_page.wait_for_selector", detail.WaitForSelector},
+			struct{ field, value string }{"detail_page.selectors.title", detail.Selectors.Title},
+			struct{ field, value string }{"detail_page.selectors.company", detail.Selectors.Company},
+			struct{ field, value string }{"detail_page.selectors.salary", detail.Selectors.Salary},
+			struct{ field, value string }{"detail_page.selectors.description", detail.Selectors.Description},
+		)
+	}
+	if source.SearchOnUI != nil {
+		selectors = append(selectors,
+			struct{ field, value string }{"search_on_ui.input_selector", source.SearchOnUI.InputSelector},
+			struct{ field, value string }{"search_on_ui.submit_selector", source.SearchOnUI.SubmitSelector},
+		)
+	}
+
+	for _, selector := range selectors {
+		if strings.TrimSpace(selector.value) == "" {
+			continue
+		}
+		if _, err := cascadia.Parse(selector.value); err != nil {
+			return fmt.Errorf("%s must be a valid CSS selector: %w", selector.field, err)
+		}
 	}
 	return nil
 }
