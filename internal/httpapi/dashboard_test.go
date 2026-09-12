@@ -36,6 +36,57 @@ func TestDashboardRendersVacancySourceRunSummaryAndLocalStylesheet(t *testing.T)
 	}
 }
 
+func TestDashboardRendersRunButtonsForIdleAndRunningSources(t *testing.T) {
+	ctx := context.Background()
+	handler, store := sourceBuilderHandler(t)
+	idle := createHTMLRunSource(t, store, "idle-source", "idle", "Idle source")
+	running := createHTMLRunSource(t, store, "running-source", "running", "Running source")
+	if _, err := store.StartExclusiveRun(ctx, storage.NewRun{
+		ID: "running-source-run", SourceID: running.ID, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("start running source: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET / = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{idle.Name, string(storage.SourceStatusIdle), running.Name, string(storage.SourceStatusRunning)} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard does not render source state %q: %s", want, body)
+		}
+	}
+
+	idleForm := dashboardSourceRunForm(t, body, idle.ID)
+	if !regexp.MustCompile(`<button[^>]*type="submit"[^>]*>\s*Запустить\s*</button>`).MatchString(idleForm) {
+		t.Errorf("idle source form has no visible submit button: %s", idleForm)
+	}
+	if regexp.MustCompile(`<button[^>]*\sdisabled(?:[\s=>]|$)`).MatchString(idleForm) {
+		t.Errorf("idle source form unexpectedly disables run button: %s", idleForm)
+	}
+
+	runningForm := dashboardSourceRunForm(t, body, running.ID)
+	if !regexp.MustCompile(`<button[^>]*\sdisabled(?:[\s=>]|$)[^>]*>\s*Запустить\s*</button>`).MatchString(runningForm) {
+		t.Errorf("running source form does not disable run button: %s", runningForm)
+	}
+}
+
+func dashboardSourceRunForm(t *testing.T, body, sourceID string) string {
+	t.Helper()
+	pattern := `(?s)<form[^>]*action="/sources/` + regexp.QuoteMeta(sourceID) + `/run"[^>]*>.*?</form>`
+	form := regexp.MustCompile(pattern).FindString(body)
+	if form == "" {
+		t.Fatalf("dashboard has no POST run form for source %q: %s", sourceID, body)
+	}
+	if !strings.Contains(form, `method="post"`) {
+		t.Errorf("dashboard run form for source %q does not use POST: %s", sourceID, form)
+	}
+	return form
+}
+
 func TestDashboardUserStatusFilterLimitsVacanciesAndKeepsSelection(t *testing.T) {
 	handler := dashboardHandler(t)
 

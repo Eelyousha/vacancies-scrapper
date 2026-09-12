@@ -44,6 +44,25 @@
       <button type="submit">Применить</button>
     </form>
 
+    <section aria-labelledby="sources-heading">
+      <h2 id="sources-heading">Источники</h2>
+      {{if .Sources}}
+      <div class="sources">
+        {{range .Sources}}
+        <article class="source">
+          <h3>{{.Name}}</h3>
+          <div class="source-actions">
+            <span class="badge">{{.Status}}</span>
+            <form method="post" action="/sources/{{.ID}}/run">
+              <button{{if eq .Status "running"}} disabled{{end}} type="submit">Запустить</button>
+            </form>
+          </div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}<p class="empty">Сохранённых источников пока нет.</p>{{end}}
+    </section>
+
     <section aria-labelledby="vacancies-heading">
       <h2 id="vacancies-heading">Лента</h2>
       {{if .Vacancies}}

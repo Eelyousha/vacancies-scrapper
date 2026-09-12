@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,107 @@ func TestManualSourceRunSavesResultAndRedirectsToFilteredDashboard(t *testing.T)
 	}
 }
 
+func TestManualSourceRunUsesIncompleteHeadRunsAndPeriodicCompleteReconciliation(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "vacancies.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	browser := &paginationRecordingBrowser{}
+	handler := New(store, dryrun.New(browser, time.Minute), browser)
+	const configuredMaxIterations = 8
+	source, err := store.CreateSource(ctx, storage.NewSource{
+		ID: "source-1", Slug: "example", Name: "Example jobs", IsActive: true,
+		ConfigYAML: `site_name: Example
+base_url: https://example.test/jobs
+page:
+  wait_for_selector: .jobs
+  timeout_seconds: 1
+  settle_delay_ms: 0
+pagination:
+  type: scroll_or_button
+  max_attempts_without_new_data: 1
+  max_iterations: 8
+selectors:
+  container: .jobs
+  card: .job
+  title: h2
+  link: a
+`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the source with a known vacancy. The first three manual runs only
+	// cover the head of the listing and therefore must not archive this record
+	// when the test scraper does not return it.
+	seed, err := store.StartRun(ctx, storage.NewRun{ID: "seed", SourceID: source.ID, StartedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyObservedVacancies(ctx, seed.ID, []storage.ObservedVacancy{
+		{Title: "Head vacancy", Link: "https://example.test/jobs/head"},
+		{Title: "Deep vacancy", Link: "https://example.test/jobs/deep"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteRun(ctx, storage.CompleteRun{
+		ID: seed.ID, Status: storage.RunStatusSuccess, CompletionStatus: storage.CompletionStatusComplete, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/sources/"+source.ID+"/run", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("head run %d status = %d: %s", attempt+1, recorder.Code, recorder.Body.String())
+		}
+		runs, err := store.LatestRuns(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runs[0].Status != storage.RunStatusPartial || runs[0].CompletionStatus != storage.CompletionStatusIncomplete {
+			t.Errorf("head run %d = status %q, completion %q; want partial/incomplete", attempt+1, runs[0].Status, runs[0].CompletionStatus)
+		}
+	}
+
+	var listingStatus string
+	if err := store.DB.QueryRowContext(ctx, "SELECT listing_status FROM vacancies WHERE source_id = ? AND canonical_link = ?", source.ID, "https://example.test/jobs/deep").Scan(&listingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if listingStatus != "active" {
+		t.Errorf("deep vacancy after head runs = %q, want active", listingStatus)
+	}
+
+	full := httptest.NewRecorder()
+	handler.ServeHTTP(full, httptest.NewRequest(http.MethodPost, "/api/sources/"+source.ID+"/run", nil))
+	if full.Code != http.StatusOK {
+		t.Fatalf("full reconciliation status = %d: %s", full.Code, full.Body.String())
+	}
+	runs, err := store.LatestRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].Status != storage.RunStatusSuccess || runs[0].CompletionStatus != storage.CompletionStatusComplete {
+		t.Errorf("full reconciliation = status %q, completion %q; want success/complete", runs[0].Status, runs[0].CompletionStatus)
+	}
+	if runs[0].ArchivedCount != 1 {
+		t.Errorf("full reconciliation archived = %d, want 1", runs[0].ArchivedCount)
+	}
+	if err := store.DB.QueryRowContext(ctx, "SELECT listing_status FROM vacancies WHERE source_id = ? AND canonical_link = ?", source.ID, "https://example.test/jobs/deep").Scan(&listingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if listingStatus != "archived" {
+		t.Errorf("deep vacancy after complete reconciliation = %q, want archived", listingStatus)
+	}
+	if got, want := browser.iterations, []int{3, 3, 3, configuredMaxIterations}; !slices.Equal(got, want) {
+		t.Errorf("scraper pagination limits = %v, want %v", got, want)
+	}
+}
+
 func TestManualSourceRunRejectsAlreadyRunningSourceWithoutSecondRun(t *testing.T) {
 	ctx := context.Background()
 	handler, store := sourceBuilderHandler(t)
@@ -224,6 +326,15 @@ func createHTMLRunSource(t *testing.T, store *storage.Store, id, slug, name stri
 type queryRecordingBrowser struct {
 	query            string
 	usedLegacyScrape bool
+}
+
+type paginationRecordingBrowser struct {
+	iterations []int
+}
+
+func (b *paginationRecordingBrowser) Scrape(_ context.Context, source config.Source) (scraper.Result, error) {
+	b.iterations = append(b.iterations, source.Pagination.MaxIterations)
+	return scraper.Result{Vacancies: []scraper.Vacancy{{Title: "Head vacancy", Link: "https://example.test/jobs/head"}}}, nil
 }
 
 type contextRecordingBrowser struct {

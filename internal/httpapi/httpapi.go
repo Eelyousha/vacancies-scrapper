@@ -18,6 +18,7 @@ import (
 
 	"vacancies-scrapper/internal/config"
 	"vacancies-scrapper/internal/dryrun"
+	"vacancies-scrapper/internal/revisit"
 	"vacancies-scrapper/internal/runlog"
 	"vacancies-scrapper/internal/scraper"
 	"vacancies-scrapper/internal/storage"
@@ -510,11 +511,22 @@ func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (
 		log.Printf("manual run could not start source_id=%q source_slug=%q error=%q", id, source.Slug, err)
 		return storage.Run{}, http.StatusInternalServerError, err
 	}
+	logger := runlog.New(a.store)
 	log.Printf("manual run started source_id=%q source_slug=%q run_id=%q query=%q", source.ID, source.Slug, run.ID, query)
+	completedRuns, err := a.store.CountTerminalNonFailedRuns(persistenceCtx, source.ID)
+	if err != nil {
+		err = recordManualRunFailure(logger, source, run, err)
+		return storage.Run{}, http.StatusInternalServerError, err
+	}
+	plan := revisit.Build(cfg, completedRuns)
+	if cfg.Pagination != nil {
+		pagination := *cfg.Pagination
+		pagination.MaxIterations = plan.MaxIterations
+		cfg.Pagination = &pagination
+	}
 	runCtx, cancel := context.WithTimeout(context.Background(), a.runTimeout)
 	defer cancel()
 	result, err := scrapeSourceWithQuery(runCtx, a.scraper, cfg, query)
-	logger := runlog.New(a.store)
 	if err != nil {
 		err = recordManualRunFailure(logger, source, run, err)
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -527,7 +539,7 @@ func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (
 	if cfg.Identity != nil {
 		fields = cfg.Identity.FallbackFields
 	}
-	completed, err := logger.Finish(persistenceCtx, run.ID, result, fields, storage.CompletionStatusComplete)
+	completed, err := logger.Finish(persistenceCtx, run.ID, result, fields, plan.CompletionStatus)
 	if err != nil {
 		err = recordManualRunFailure(logger, source, run, err)
 		return storage.Run{}, http.StatusInternalServerError, err

@@ -367,6 +367,23 @@ func (s *Store) LastRun(ctx context.Context, sourceID string) (Run, error) {
 	return run, nil
 }
 
+// CountTerminalNonFailedRuns returns prior successful and partial attempts for
+// a source. Failed and running attempts do not advance revisit reconciliation:
+// neither represents a completed observation of the listing.
+func (s *Store) CountTerminalNonFailedRuns(ctx context.Context, sourceID string) (int, error) {
+	if strings.TrimSpace(sourceID) == "" {
+		return 0, fmt.Errorf("source id is required")
+	}
+	var count int
+	if err := s.DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM scraping_runs
+		WHERE source_id = ? AND status IN (?, ?)
+	`, sourceID, RunStatusSuccess, RunStatusPartial).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count terminal non-failed runs for source %q: %w", sourceID, err)
+	}
+	return count, nil
+}
+
 func (s *Store) getRun(ctx context.Context, id string) (Run, error) {
 	run, err := scanRun(s.DB.QueryRowContext(ctx, runSelect+" WHERE id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {

@@ -278,6 +278,42 @@ func TestLastRunReturnsMostRecentRunForSource(t *testing.T) {
 	}
 }
 
+func TestCountTerminalNonFailedRunsExcludesFailedAndRunningAttempts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+
+	for _, terminal := range []struct {
+		id         string
+		status     RunStatus
+		completion CompletionStatus
+	}{
+		{id: "success", status: RunStatusSuccess, completion: CompletionStatusComplete},
+		{id: "partial", status: RunStatusPartial, completion: CompletionStatusIncomplete},
+		{id: "failed", status: RunStatusFailed, completion: CompletionStatusUnknown},
+	} {
+		run := startTestRun(t, store, terminal.id, source.ID)
+		if _, err := store.CompleteRun(ctx, CompleteRun{
+			ID: run.ID, Status: terminal.status, CompletionStatus: terminal.completion, FinishedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("complete %s run: %v", terminal.id, err)
+		}
+	}
+	if _, err := store.StartRun(ctx, NewRun{ID: "running", SourceID: source.ID, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("start running attempt: %v", err)
+	}
+
+	count, err := store.CountTerminalNonFailedRuns(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("CountTerminalNonFailedRuns() = %d, want success and partial only", count)
+	}
+}
+
 func createTestSource(t *testing.T, store *Store, id, slug string) Source {
 	t.Helper()
 
