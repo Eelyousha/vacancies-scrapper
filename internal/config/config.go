@@ -19,7 +19,7 @@ type Source struct {
 	SiteName string `yaml:"site_name"`
 	// BaseURL — стартовая абсолютная страница со списком вакансий.
 	BaseURL string `yaml:"base_url"`
-	// SearchURLTemplate описывает поиск через URL; на текущем этапе не исполняется.
+	// SearchURLTemplate describes a URL search with a {query} placeholder.
 	SearchURLTemplate string `yaml:"search_url_template"`
 	// SearchOnUI описывает поиск через элементы страницы; пока резерв для следующего этапа.
 	SearchOnUI *SearchOnUI `yaml:"search_on_ui"`
@@ -35,7 +35,7 @@ type Source struct {
 	Identity *Identity `yaml:"identity"`
 }
 
-// SearchOnUI описывает действия, необходимые для ввода поискового запроса в UI.
+// SearchOnUI describes the UI actions for a one-off manual search phrase.
 type SearchOnUI struct {
 	// InputSelector указывает поле поиска.
 	InputSelector string `yaml:"input_selector"`

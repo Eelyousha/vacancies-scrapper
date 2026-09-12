@@ -67,6 +67,9 @@
           <div class="source-actions">
             <span class="badge">{{.Status}}</span>
             <form method="post" action="/sources/{{.ID}}/run">
+              <label>Поисковая фраза
+                <input name="search_query" type="search" placeholder="Необязательно">
+              </label>
               <button type="submit">Запустить</button>
             </form>
           </div>

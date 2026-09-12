@@ -8,6 +8,16 @@ import (
 	"vacancies-scrapper/internal/config"
 )
 
+func TestResolveSearchURLReplacesEveryPlaceholderWithQueryEncodedPhrase(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveSearchURL("https://example.test/jobs?q={query}&copy={query}", "Go developer & C++")
+	want := "https://example.test/jobs?q=Go+developer+%26+C%2B%2B&copy=Go+developer+%26+C%2B%2B"
+	if got != want {
+		t.Errorf("ResolveSearchURL() = %q, want %q", got, want)
+	}
+}
+
 // TestParseYandexListFixture проверяет контракт базового разбора на сохранённом
 // HTML. Фикстура позволяет тестировать изменение кода без реального браузера.
 func TestParseYandexListFixture(t *testing.T) {

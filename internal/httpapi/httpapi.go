@@ -207,7 +207,11 @@ func (a *API) createSourceBuilder(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) runSourceBuilder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, status, err := a.executeSourceRun(r.Context(), id); err != nil {
+	if err := r.ParseForm(); err != nil {
+		a.renderSourceBuilder(w, r, http.StatusBadRequest, sourceBuilderData{Error: err.Error()})
+		return
+	}
+	if _, status, err := a.executeSourceRunWithQuery(r.Context(), id, r.PostForm.Get("search_query")); err != nil {
 		a.renderSourceBuilder(w, r, status, sourceBuilderData{Error: err.Error()})
 		return
 	}
@@ -460,6 +464,12 @@ func (a *API) runSource(w http.ResponseWriter, r *http.Request) {
 // runs. Keeping the two entry points here prevents either one from bypassing
 // exclusive-start locking or leaving a source marked running after a failure.
 func (a *API) executeSourceRun(ctx context.Context, id string) (storage.Run, int, error) {
+	return a.executeSourceRunWithQuery(ctx, id, "")
+}
+
+// executeSourceRunWithQuery keeps the JSON API contract unchanged while
+// allowing the HTML manual-run form to provide a one-off search phrase.
+func (a *API) executeSourceRunWithQuery(ctx context.Context, id, query string) (storage.Run, int, error) {
 	source, err := a.store.GetSource(ctx, id)
 	if err != nil {
 		return storage.Run{}, http.StatusNotFound, err
@@ -475,7 +485,7 @@ func (a *API) executeSourceRun(ctx context.Context, id string) (storage.Run, int
 	if err != nil {
 		return storage.Run{}, http.StatusInternalServerError, err
 	}
-	result, err := a.scraper.Scrape(ctx, cfg)
+	result, err := scrapeSourceWithQuery(ctx, a.scraper, cfg, query)
 	logger := runlog.New(a.store)
 	if err != nil {
 		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
@@ -493,6 +503,20 @@ func (a *API) executeSourceRun(ctx context.Context, id string) (storage.Run, int
 		return storage.Run{}, http.StatusInternalServerError, err
 	}
 	return completed, http.StatusOK, nil
+}
+
+type queryScraper interface {
+	ScrapeWithQuery(context.Context, config.Source, string) (scraper.Result, error)
+}
+
+func scrapeSourceWithQuery(ctx context.Context, browser dryrun.Scraper, source config.Source, query string) (scraper.Result, error) {
+	if strings.TrimSpace(query) == "" {
+		return browser.Scrape(ctx, source)
+	}
+	if searchable, ok := browser.(queryScraper); ok {
+		return searchable.ScrapeWithQuery(ctx, source, query)
+	}
+	return scraper.Result{}, errors.New("manual search is not supported by this scraper")
 }
 
 var _ dryrun.Scraper = scraper.Scraper{}

@@ -37,6 +37,8 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 18 | Список источников и ручной запуск из HTML | `выполнено` | [запись](implementation/2026-09-12-source-list-and-manual-run.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 19 | Актуализация статусов roadmap | `выполнено` | [запись](implementation/2026-09-12-roadmap-status-refresh.md); проверка ссылок, Markdown и `git diff --check` |
 | 20 | Предбраузерная валидация CSS-селекторов | `выполнено` | [запись](implementation/2026-09-12-css-selector-validation.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 21 | Поисковая фраза пользователя при ручном запуске | `выполнено` | [запись](implementation/2026-09-12-manual-search-query.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 22 | Расширение README по возможностям проекта | `выполнено` | [запись](implementation/2026-09-12-readme-capabilities-refresh.md); проверка ссылок, Markdown и `git diff --check` |
 
 ## Как обновлять
 

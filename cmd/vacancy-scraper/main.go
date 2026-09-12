@@ -19,6 +19,7 @@ func main() {
 	maxResults := flag.Int("max-results", 0, "maximum number of extracted vacancies (0 means all)")
 	maxDetailPages := flag.Int("max-detail-pages", 0, "maximum number of detail pages to open (0 means all)")
 	maxIterations := flag.Int("max-pagination-iterations", 0, "override pagination iterations for this run (0 uses YAML)")
+	searchQuery := flag.String("search", "", "optional search phrase for this manual run")
 	headless := flag.Bool("headless", true, "run Chromium headlessly")
 	runTimeout := flag.Duration("run-timeout", 5*time.Minute, "maximum duration of the complete scrape")
 	flag.Parse()
@@ -37,7 +38,7 @@ func main() {
 	// Chromium, ожидание динамической загрузки и разбор итогового DOM.
 	ctx, cancel := context.WithTimeout(context.Background(), *runTimeout)
 	defer cancel()
-	result, err := scraper.New(*headless, *maxDetailPages).Scrape(ctx, sourceConfig)
+	result, err := scraper.New(*headless, *maxDetailPages).ScrapeWithQuery(ctx, sourceConfig, *searchQuery)
 	if err != nil {
 		fail(err)
 	}

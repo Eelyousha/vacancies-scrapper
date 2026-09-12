@@ -10,6 +10,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 
 	"vacancies-scrapper/internal/config"
 )
@@ -63,7 +64,22 @@ func New(headless bool, maxDetailPages int) Scraper {
 // Scrape открывает стартовую страницу, догружает карточки, получает HTML
 // контейнера и разбирает его. Метод не пишет в БД и не меняет YAML-конфиг.
 func (s Scraper) Scrape(ctx context.Context, source config.Source) (Result, error) {
-	result := Result{SiteName: source.SiteName, URL: source.BaseURL, StartedAt: time.Now().UTC()}
+	return s.ScrapeWithQuery(ctx, source, "")
+}
+
+// ScrapeWithQuery collects vacancies for one optional, user-supplied search
+// phrase. The phrase is deliberately not persisted in the source YAML: it is
+// an input of this one manual run only.
+func (s Scraper) ScrapeWithQuery(ctx context.Context, source config.Source, query string) (Result, error) {
+	startURL := source.BaseURL
+	query = strings.TrimSpace(query)
+	if query != "" && strings.TrimSpace(source.SearchURLTemplate) != "" {
+		startURL = ResolveSearchURL(source.SearchURLTemplate, query)
+	}
+	result := Result{SiteName: source.SiteName, URL: startURL, StartedAt: time.Now().UTC()}
+	// Relative vacancy links belong to the page that Chromium actually opened,
+	// which can differ from base_url when a URL search template is configured.
+	source.BaseURL = startURL
 
 	// Allocator запускает отдельный процесс Chromium. Его контекст и контекст
 	// вкладки закрываются defer-ами даже при таймауте или ошибке парсинга.
@@ -78,14 +94,26 @@ func (s Scraper) Scrape(ctx context.Context, source config.Source) (Result, erro
 	// закрыла бы вкладку и прервала последующую пагинацию.
 	if err := chromedp.Run(
 		browserCtx,
-		chromedp.Navigate(source.BaseURL),
+		chromedp.Navigate(startURL),
+	); err != nil {
+		return result, fmt.Errorf("open %s: %w", startURL, err)
+	}
+
+	if query != "" && strings.TrimSpace(source.SearchURLTemplate) == "" && source.SearchOnUI != nil {
+		if err := runUISearch(browserCtx, *source.SearchOnUI, query); err != nil {
+			return result, err
+		}
+	}
+
+	if err := chromedp.Run(
+		browserCtx,
 		chromedp.Poll(
 			"document.querySelector("+strconv.Quote(source.Page.WaitForSelector)+") !== null",
 			nil,
 			chromedp.WithPollingTimeout(source.Page.Timeout()),
 		),
 	); err != nil {
-		return result, fmt.Errorf("open %s: %w", source.BaseURL, err)
+		return result, fmt.Errorf("wait for vacancy list: %w", err)
 	}
 
 	iterations, err := loadAll(browserCtx, source)
@@ -111,6 +139,38 @@ func (s Scraper) Scrape(ctx context.Context, source config.Source) (Result, erro
 		result.DetailsFetched, result.DetailErrors = enrichDetails(browserCtx, source, result.Vacancies, s.maxDetailPages)
 	}
 	return result, nil
+}
+
+// ResolveSearchURL substitutes every query placeholder with a value encoded
+// for a URL query component. A URL template takes priority over browser UI
+// automation because it is deterministic and avoids site-specific clicks.
+func ResolveSearchURL(template, query string) string {
+	return strings.ReplaceAll(template, "{query}", url.QueryEscape(query))
+}
+
+// runUISearch enters the search phrase after the initial navigation and before
+// waiting for the result list. A configured button wins over Enter because some
+// sites bind their search action only to an explicit click.
+func runUISearch(ctx context.Context, search config.SearchOnUI, query string) error {
+	if err := chromedp.Run(ctx,
+		chromedp.WaitVisible(search.InputSelector, chromedp.ByQuery),
+		chromedp.Focus(search.InputSelector, chromedp.ByQuery),
+		chromedp.SetValue(search.InputSelector, query, chromedp.ByQuery),
+	); err != nil {
+		return fmt.Errorf("fill search input: %w", err)
+	}
+	if strings.TrimSpace(search.SubmitSelector) != "" {
+		if err := chromedp.Run(ctx, chromedp.Click(search.SubmitSelector, chromedp.ByQuery)); err != nil {
+			return fmt.Errorf("submit search: %w", err)
+		}
+		return nil
+	}
+	if search.Enter {
+		if err := chromedp.Run(ctx, chromedp.KeyEvent(kb.Enter)); err != nil {
+			return fmt.Errorf("submit search with Enter: %w", err)
+		}
+	}
+	return nil
 }
 
 // enrichDetails последовательно открывает ссылки вакансий и дополняет поля из

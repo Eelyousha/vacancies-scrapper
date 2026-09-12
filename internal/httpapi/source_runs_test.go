@@ -4,10 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"vacancies-scrapper/internal/config"
+	"vacancies-scrapper/internal/dryrun"
+	"vacancies-scrapper/internal/scraper"
 	"vacancies-scrapper/internal/storage"
 )
 
@@ -27,10 +31,59 @@ func TestSourcesPageListsSavedSourceAndManualRunForm(t *testing.T) {
 		string(storage.SourceStatusIdle),
 		`action="/sources/` + source.ID + `/run"`,
 		`method="post"`,
+		`name="search_query"`,
+		`type="search"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /sources does not contain %q: %s", want, body)
 		}
+	}
+}
+
+func TestManualSourceRunForwardsSubmittedSearchQuery(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "vacancies.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	browser := &queryRecordingBrowser{}
+	handler := New(store, dryrun.New(browser, time.Minute), browser)
+	source := createHTMLRunSource(t, store, "source-1", "example", "Example jobs")
+
+	request := httptest.NewRequest(http.MethodPost, "/sources/"+source.ID+"/run", strings.NewReader("search_query=Go+developer"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("POST /sources/:id/run = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if browser.query != "Go developer" {
+		t.Errorf("ScrapeWithQuery query = %q, want submitted phrase", browser.query)
+	}
+	if browser.usedLegacyScrape {
+		t.Error("manual run with a search phrase used legacy Scrape instead of ScrapeWithQuery")
+	}
+}
+
+func TestScrapeSourceWithQueryUsesLegacyScrapeOnlyForBlankPhrase(t *testing.T) {
+	t.Parallel()
+	browser := &queryRecordingBrowser{}
+	source := config.Source{}
+
+	if _, err := scrapeSourceWithQuery(context.Background(), browser, source, " \t "); err != nil {
+		t.Fatalf("scrapeSourceWithQuery blank query: %v", err)
+	}
+	if !browser.usedLegacyScrape || browser.query != "" {
+		t.Errorf("blank query calls = legacy:%t query:%q, want legacy only", browser.usedLegacyScrape, browser.query)
+	}
+}
+
+func TestScrapeSourceWithQueryRejectsPhraseForLegacyOnlyBrowser(t *testing.T) {
+	t.Parallel()
+	if _, err := scrapeSourceWithQuery(context.Background(), fakeBrowser{}, config.Source{}, "Go"); err == nil {
+		t.Fatal("scrapeSourceWithQuery() succeeded for a browser without query support")
 	}
 }
 
@@ -98,4 +151,19 @@ func createHTMLRunSource(t *testing.T, store *storage.Store, id, slug, name stri
 		t.Fatal(err)
 	}
 	return source
+}
+
+type queryRecordingBrowser struct {
+	query            string
+	usedLegacyScrape bool
+}
+
+func (b *queryRecordingBrowser) Scrape(context.Context, config.Source) (scraper.Result, error) {
+	b.usedLegacyScrape = true
+	return scraper.Result{Vacancies: []scraper.Vacancy{{Title: "Role", Link: "https://example.test/jobs/1"}}}, nil
+}
+
+func (b *queryRecordingBrowser) ScrapeWithQuery(_ context.Context, _ config.Source, query string) (scraper.Result, error) {
+	b.query = query
+	return scraper.Result{Vacancies: []scraper.Vacancy{{Title: "Role", Link: "https://example.test/jobs/1"}}}, nil
 }
