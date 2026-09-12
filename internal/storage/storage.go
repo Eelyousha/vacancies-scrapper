@@ -37,9 +37,12 @@ var migrations = []migration{
 func Open(ctx context.Context, path string) (*Store, error) {
 	// The pragma in the DSN applies to every connection opened by database/sql;
 	// setting it below as well lets Open fail early if the driver ignores it.
+	// File paths are intentionally stored in the opaque URI component. Setting
+	// URL.Path for a relative filename can produce file://name.db, which SQLite
+	// interprets as a URI with name.db as its host instead of a local file.
 	dsn := (&url.URL{
 		Scheme:   "file",
-		Path:     path,
+		Opaque:   (&url.URL{Path: path}).EscapedPath(),
 		RawQuery: url.Values{"_pragma": {"foreign_keys(1)"}}.Encode(),
 	}).String()
 	db, err := sql.Open("sqlite", dsn)

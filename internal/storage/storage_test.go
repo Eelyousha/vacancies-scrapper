@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,6 +59,44 @@ func TestOpenAppliesMigrationsOnlyOnce(t *testing.T) {
 	}
 	if migrationCount != 2 {
 		t.Errorf("applied migrations = %d, want 2", migrationCount)
+	}
+}
+
+func TestOpenWithRelativePathAppliesMigrationsAndEnforcesForeignKeys(t *testing.T) {
+	t.Parallel()
+
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	databasePath, err := filepath.Rel(workingDirectory, filepath.Join(t.TempDir(), "vacancies.db"))
+	if err != nil {
+		t.Fatalf("make database path relative: %v", err)
+	}
+
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open() with relative path: %v", err)
+	}
+	defer store.Close()
+
+	var version int
+	if err := store.DB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version != LatestSchemaVersion() {
+		t.Errorf("schema version = %d, want %d", version, LatestSchemaVersion())
+	}
+
+	_, err = store.DB.Exec(`
+		INSERT INTO vacancies (id, source_id, title, company, link, canonical_link, identity_key, created_at, updated_at)
+		VALUES ('vacancy-relative-path', 'missing-source', 'Go developer', 'Example', 'https://example.test/jobs/relative', 'https://example.test/jobs/relative', 'https://example.test/jobs/relative', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')
+	`)
+	if err == nil {
+		t.Fatal("insert with an unknown source succeeded")
+	}
+	if !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		t.Errorf("insert error = %v, want foreign key error", err)
 	}
 }
 
