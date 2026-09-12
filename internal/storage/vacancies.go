@@ -153,19 +153,20 @@ func CanonicalizeLink(raw string) (string, error) {
 }
 
 type storedVacancy struct {
-	ID          string
-	Title       string
-	Company     string
-	Salary      string
-	Description string
+	ID            string
+	Title         string
+	Company       string
+	Salary        string
+	Description   string
+	ListingStatus string
 }
 
 func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, identityKey, canonical string, item ObservedVacancy) (string, error) {
 	var current storedVacancy
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, title, company, COALESCE(salary, ''), COALESCE(description, '')
+		SELECT id, title, company, COALESCE(salary, ''), COALESCE(description, ''), listing_status
 		FROM vacancies WHERE source_id = ? AND identity_key = ?
-	`, sourceID, identityKey).Scan(&current.ID, &current.Title, &current.Company, &current.Salary, &current.Description)
+	`, sourceID, identityKey).Scan(&current.ID, &current.Title, &current.Company, &current.Salary, &current.Description, &current.ListingStatus)
 	now := time.Now().UTC()
 	if errors.Is(err, sql.ErrNoRows) {
 		id := vacancyID(sourceID, identityKey)
@@ -195,9 +196,12 @@ func applyObservedVacancy(ctx context.Context, tx *sql.Tx, runID, sourceID, iden
 			changed = append(changed, change)
 		}
 	}
-	updated := len(changed) > 0 || current.Description != item.Description
+	updated := len(changed) > 0 || current.Description != item.Description || current.ListingStatus != "active"
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE vacancies SET title = ?, company = ?, salary = ?, link = ?, canonical_link = ?, description = ?, last_run_id = ?, updated_at = ? WHERE id = ?
+		UPDATE vacancies
+		SET title = ?, company = ?, salary = ?, link = ?, canonical_link = ?, description = ?,
+			listing_status = 'active', archived_at = NULL, last_run_id = ?, updated_at = ?
+		WHERE id = ?
 	`, item.Title, item.Company, nullIfEmpty(item.Salary), item.Link, canonical, nullIfEmpty(item.Description), runID, formatTime(now), current.ID); err != nil {
 		return "", fmt.Errorf("update vacancy identity %q: %w", identityKey, err)
 	}

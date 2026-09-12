@@ -132,6 +132,55 @@ func TestApplyObservedVacanciesUsesFallbackIdentityForDynamicURLs(t *testing.T) 
 	}
 }
 
+func TestApplyObservedVacanciesReactivatesArchivedVacancy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	source := createTestSource(t, store, "source-1", "example")
+	observed := ObservedVacancy{Title: "Go developer", Company: "Example", Link: "https://example.test/jobs/1"}
+
+	first := startTestRun(t, store, "run-1", source.ID)
+	if _, err := store.ApplyObservedVacancies(ctx, first.ID, []ObservedVacancy{observed}); err != nil {
+		t.Fatalf("apply first observation: %v", err)
+	}
+	if _, err := store.CompleteRun(ctx, CompleteRun{ID: first.ID, Status: RunStatusSuccess, CompletionStatus: CompletionStatusComplete, FinishedAt: time.Now()}); err != nil {
+		t.Fatalf("complete first run: %v", err)
+	}
+
+	second := startTestRun(t, store, "run-2", source.ID)
+	if _, err := store.CompleteRun(ctx, CompleteRun{ID: second.ID, Status: RunStatusSuccess, CompletionStatus: CompletionStatusComplete, FinishedAt: time.Now()}); err != nil {
+		t.Fatalf("complete empty run: %v", err)
+	}
+	var archived string
+	if err := store.DB.QueryRowContext(ctx, "SELECT listing_status FROM vacancies WHERE source_id = ?", source.ID).Scan(&archived); err != nil {
+		t.Fatalf("read archived vacancy: %v", err)
+	}
+	if archived != "archived" {
+		t.Fatalf("listing status after empty complete run = %q, want archived", archived)
+	}
+
+	third := startTestRun(t, store, "run-3", source.ID)
+	delta, err := store.ApplyObservedVacancies(ctx, third.ID, []ObservedVacancy{observed})
+	if err != nil {
+		t.Fatalf("apply returning observation: %v", err)
+	}
+	if delta.UpdatedCount != 1 {
+		t.Errorf("returning observation delta = %#v, want one updated vacancy", delta)
+	}
+	var status string
+	var archivedAt any
+	if err := store.DB.QueryRowContext(ctx, "SELECT listing_status, archived_at FROM vacancies WHERE source_id = ?", source.ID).Scan(&status, &archivedAt); err != nil {
+		t.Fatalf("read reactivated vacancy: %v", err)
+	}
+	if status != "active" {
+		t.Errorf("listing status after returning observation = %q, want active", status)
+	}
+	if archivedAt != nil {
+		t.Errorf("archived_at after returning observation = %v, want NULL", archivedAt)
+	}
+}
+
 func startTestRun(t *testing.T, store *Store, id, sourceID string) Run {
 	t.Helper()
 	run, err := store.StartRun(context.Background(), NewRun{ID: id, SourceID: sourceID, StartedAt: time.Now()})

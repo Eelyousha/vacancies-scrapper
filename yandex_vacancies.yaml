@@ -1,0 +1,27 @@
+site_name: "Яндекс"
+base_url: "https://yandex.ru/jobs/vacancies"
+
+page:
+  wait_for_selector: "section[class^='VacanciesList_list__']"
+  timeout_seconds: 30
+  settle_delay_ms: 1500
+
+pagination:
+  type: "scroll_or_button"
+  action_selector: "div[class^='VacanciesSearchMoreButton_root__'] > button"
+  max_attempts_without_new_data: 5
+  max_iterations: 100
+
+selectors:
+  container: "section[class^='VacanciesList_list__']"
+  card: "article[class^='VacancySnippet_wrapper__']"
+  title: "a[class*='VacancySnippet_titleLink__']"
+  link: "a[class*='VacancySnippet_titleLink__']"
+  description: "div[class^='VacancySnippet_body__'] > p"
+
+detail_page:
+  wait_for_selector: "main[class^='Vacancy_vacancy__']"
+  timeout_seconds: 30
+  selectors:
+    title: "h1[class*='CareerText_display-M-JOBS__']"
+    description: "div[class^='Vacancy_vacancyBody__']"

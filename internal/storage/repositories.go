@@ -45,19 +45,19 @@ const (
 
 // Source is the persistent configuration and current operational state of a site.
 type Source struct {
-	ID               string
-	Slug             string
-	Name             string
-	ConfigYAML       string
-	IsActive         bool
-	ScheduleType     string
-	ScheduleValue    string
-	ScheduleTimezone string
-	LastRunAt        time.Time
-	LastError        string
-	Status           SourceStatus
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               string       `json:"id"`
+	Slug             string       `json:"slug"`
+	Name             string       `json:"name"`
+	ConfigYAML       string       `json:"config_yaml"`
+	IsActive         bool         `json:"is_active"`
+	ScheduleType     string       `json:"schedule_type"`
+	ScheduleValue    string       `json:"schedule_value"`
+	ScheduleTimezone string       `json:"schedule_timezone"`
+	LastRunAt        time.Time    `json:"last_run_at"`
+	LastError        string       `json:"last_error"`
+	Status           SourceStatus `json:"status"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 // NewSource contains fields set by the caller when registering a site.
@@ -74,18 +74,18 @@ type NewSource struct {
 
 // Run records one attempt to collect vacancies from a source.
 type Run struct {
-	ID               string
-	SourceID         string
-	StartedAt        time.Time
-	FinishedAt       time.Time
-	Status           RunStatus
-	CompletionStatus CompletionStatus
-	AddedCount       int
-	UpdatedCount     int
-	ArchivedCount    int
-	SeenCount        int
-	ErrorMessage     string
-	MetaJSON         string
+	ID               string           `json:"id"`
+	SourceID         string           `json:"source_id"`
+	StartedAt        time.Time        `json:"started_at"`
+	FinishedAt       time.Time        `json:"finished_at"`
+	Status           RunStatus        `json:"status"`
+	CompletionStatus CompletionStatus `json:"completion_status"`
+	AddedCount       int              `json:"added_count"`
+	UpdatedCount     int              `json:"updated_count"`
+	ArchivedCount    int              `json:"archived_count"`
+	SeenCount        int              `json:"seen_count"`
+	ErrorMessage     string           `json:"error_message"`
+	MetaJSON         string           `json:"meta_json"`
 }
 
 type NewRun struct {

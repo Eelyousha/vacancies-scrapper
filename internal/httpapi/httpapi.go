@@ -73,14 +73,26 @@ func (a *API) importSource(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, map[string]any{"yaml": request.YAML, "requires_dry_run": true})
 }
 func parseInt(value string) int { number, _ := strconv.Atoi(value); return number }
+
+func normalizePagination(limit, offset int) (int, int) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
 func (a *API) listVacancies(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	items, total, err := a.store.ListVacancies(r.Context(), storage.VacancyFilter{SourceID: q.Get("source_id"), ListingStatus: q.Get("listing_status"), UserStatus: q.Get("user_status"), RunID: q.Get("run_id"), Search: q.Get("search"), Sort: q.Get("sort"), Direction: q.Get("direction"), Limit: parseInt(q.Get("limit")), Offset: parseInt(q.Get("offset"))})
+	limit, offset := normalizePagination(parseInt(q.Get("limit")), parseInt(q.Get("offset")))
+	items, total, err := a.store.ListVacancies(r.Context(), storage.VacancyFilter{SourceID: q.Get("source_id"), ListingStatus: q.Get("listing_status"), UserStatus: q.Get("user_status"), RunID: q.Get("run_id"), Search: q.Get("search"), Sort: q.Get("sort"), Direction: q.Get("direction"), Limit: limit, Offset: offset})
 	if err != nil {
 		fail(w, 422, err)
 		return
 	}
-	reply(w, 200, map[string]any{"items": items, "total": total, "limit": q.Get("limit"), "offset": q.Get("offset")})
+	reply(w, 200, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
 }
 func (a *API) updateVacancy(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/vacancies/")
@@ -266,6 +278,8 @@ func (a *API) runSource(w http.ResponseWriter, r *http.Request) {
 	}
 	completed, err := logger.Finish(r.Context(), run.ID, result, fields, storage.CompletionStatusComplete)
 	if err != nil {
+		// A failed persistence step must not leave the source locked in running.
+		_, _ = logger.Fail(context.Background(), run.ID, err.Error())
 		fail(w, 500, err)
 		return
 	}

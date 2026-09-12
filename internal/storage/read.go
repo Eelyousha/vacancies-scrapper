@@ -7,7 +7,19 @@ import (
 	"strings"
 )
 
-type Vacancy struct{ ID, SourceID, Title, Company, Salary, Link, CanonicalLink, Description, ListingStatus, UserStatus, LastRunID string }
+type Vacancy struct {
+	ID            string `json:"id"`
+	SourceID      string `json:"source_id"`
+	Title         string `json:"title"`
+	Company       string `json:"company"`
+	Salary        string `json:"salary"`
+	Link          string `json:"link"`
+	CanonicalLink string `json:"canonical_link"`
+	Description   string `json:"description"`
+	ListingStatus string `json:"listing_status"`
+	UserStatus    string `json:"user_status"`
+	LastRunID     string `json:"last_run_id"`
+}
 type VacancyFilter struct {
 	SourceID, ListingStatus, UserStatus, RunID, Search string
 	Sort, Direction                                    string

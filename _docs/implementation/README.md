@@ -37,3 +37,5 @@
 * [2026-09-05 — dry run и API источников](2026-09-05-dry-run-api.md) — выполнено.
 * [2026-09-06 — API вакансий, источников и запусков](2026-09-06-backend-read-api.md) — выполнено.
 * [2026-09-06 — завершение backend MVP](2026-09-06-backend-mvp-hardening.md) — выполнено.
+* [2026-09-07 — актуализация README](2026-09-07-readme-refresh.md) — выполнено.
+* [2026-09-12 — надёжность lifecycle и JSON-контракт backend](2026-09-12-backend-lifecycle-and-api-contract.md) — выполнено.
