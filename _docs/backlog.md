@@ -27,11 +27,12 @@ Backlog хранит идеи и порядок будущих инкремен�
 | 8 | Dry run, `test_token` и ручной API-запуск источника | `выполнено` | [запись](implementation/2026-09-05-dry-run-api.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 9 | API вакансий, источников и запусков для UI | `выполнено` | [запись](implementation/2026-09-06-backend-read-api.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 | 10 | Завершение backend MVP: тесты API, атомарная блокировка, расписания, import/export | `выполнено` | [запись](implementation/2026-09-06-backend-mvp-hardening.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
-| 11 | Локальный интерфейс ленты, запусков и источников | `идея` | Этап 4 ТЗ |
+| 11 | Локальный интерфейс ленты, запусков и источников | `идея` | Этап 4 ТЗ; dashboard выполнен отдельным инкрементом ниже |
 | 12 | Расписания, ограничения браузеров и запрет пересечений | `идея` | Этап 5 ТЗ |
 | 13 | Декларативная валидация YAML через struct tags; ручные проверки остаются для межполевых правил | `идея` | `internal/config`, [обсуждение](implementation/2026-09-04-project-development-skill.md) |
 | 14 | Актуализация корневой и документационной точек входа | `выполнено` | [запись](implementation/2026-09-07-readme-refresh.md); проверка ссылок, Markdown и `git diff --check` |
 | 15 | Надёжность lifecycle запусков и JSON-контракта backend | `выполнено` | [запись](implementation/2026-09-12-backend-lifecycle-and-api-contract.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
+| 16 | Dashboard ленты вакансий и сводки запусков | `выполнено` | [запись](implementation/2026-09-12-dashboard-vacancies-and-runs.md); `go test ./...`, `go vet ./...`, `go build ./...`, `git diff --check` |
 
 ## Как обновлять
 

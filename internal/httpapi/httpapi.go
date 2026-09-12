@@ -3,8 +3,10 @@ package httpapi
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +21,11 @@ import (
 	"vacancies-scrapper/internal/storage"
 )
 
+//go:embed templates/dashboard.html static/app.css
+var dashboardAssets embed.FS
+
+var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "templates/dashboard.html"))
+
 type API struct {
 	store   *storage.Store
 	dry     *dryrun.Service
@@ -28,6 +35,8 @@ type API struct {
 func New(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper) http.Handler {
 	a := &API{store: store, dry: dry, scraper: browser}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", a.dashboard)
+	mux.HandleFunc("GET /static/app.css", a.dashboardCSS)
 	mux.HandleFunc("POST /api/sources/test-config", a.testConfig)
 	mux.HandleFunc("POST /api/sources", a.createSource)
 	mux.HandleFunc("GET /api/sources", a.listSources)
@@ -39,6 +48,82 @@ func New(store *storage.Store, dry *dryrun.Service, browser dryrun.Scraper) http
 	mux.HandleFunc("PATCH /api/vacancies/", a.updateVacancy)
 	mux.HandleFunc("GET /api/runs/latest", a.latestRuns)
 	return mux
+}
+
+type dashboardVacancy struct {
+	storage.Vacancy
+	SourceName string
+}
+
+type dashboardRun struct {
+	storage.Run
+	SourceName    string
+	StartedAtText string
+}
+
+type dashboardData struct {
+	Vacancies []dashboardVacancy
+	Sources   []storage.Source
+	Runs      []dashboardRun
+	Total     int
+	Filter    storage.VacancyFilter
+}
+
+// dashboard reads directly from storage so the local UI does not depend on its
+// own HTTP API and remains usable when the server is bound to localhost only.
+func (a *API) dashboard(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, offset := normalizePagination(parseInt(q.Get("limit")), parseInt(q.Get("offset")))
+	filter := storage.VacancyFilter{
+		SourceID: q.Get("source_id"), ListingStatus: q.Get("listing_status"),
+		UserStatus: q.Get("user_status"), Search: q.Get("search"),
+		Limit: limit, Offset: offset,
+	}
+	items, total, err := a.store.ListVacancies(r.Context(), filter)
+	if err != nil {
+		fail(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	sources, err := a.store.ListSources(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	runs, err := a.store.LatestRuns(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	sourceNames := make(map[string]string, len(sources))
+	for _, source := range sources {
+		sourceNames[source.ID] = source.Name
+	}
+	data := dashboardData{Sources: sources, Total: total, Filter: filter}
+	for _, item := range items {
+		data.Vacancies = append(data.Vacancies, dashboardVacancy{Vacancy: item, SourceName: sourceNames[item.SourceID]})
+	}
+	for _, run := range runs {
+		data.Runs = append(data.Runs, dashboardRun{
+			Run: run, SourceName: sourceNames[run.SourceID],
+			StartedAtText: run.StartedAt.Local().Format("02.01.2006 15:04"),
+		})
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := dashboardTemplate.Execute(w, data); err != nil {
+		// Headers may already be written, but logging an execution failure is less
+		// useful than returning the same API-shaped error before that point.
+		return
+	}
+}
+
+func (a *API) dashboardCSS(w http.ResponseWriter, _ *http.Request) {
+	stylesheet, err := dashboardAssets.ReadFile("static/app.css")
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(stylesheet)
 }
 func (a *API) listSources(w http.ResponseWriter, r *http.Request) {
 	values, err := a.store.ListSources(r.Context())

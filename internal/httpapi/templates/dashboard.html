@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вакансии</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="layout">
+    <header>
+      <h1>Вакансии</h1>
+      <p class="muted">Найдено: {{.Total}}</p>
+    </header>
+
+    <form class="filters" method="get" action="/">
+      <label>Поиск
+        <input name="search" type="search" value="{{.Filter.Search}}" placeholder="Название или компания">
+      </label>
+      <label>Источник
+        <select name="source_id">
+          <option value="">Все источники</option>
+          {{range .Sources}}<option value="{{.ID}}" {{if eq $.Filter.SourceID .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <label>Статус в выдаче
+        <select name="listing_status">
+          <option value="">Все</option>
+          <option value="active" {{if eq .Filter.ListingStatus "active"}}selected{{end}}>Активна</option>
+          <option value="archived" {{if eq .Filter.ListingStatus "archived"}}selected{{end}}>Архив</option>
+        </select>
+      </label>
+      <label>Мой статус
+        <select name="user_status">
+          <option value="">Все</option>
+          <option value="new" {{if eq .Filter.UserStatus "new"}}selected{{end}}>Новая</option>
+          <option value="viewed" {{if eq .Filter.UserStatus "viewed"}}selected{{end}}>Просмотрена</option>
+          <option value="hidden" {{if eq .Filter.UserStatus "hidden"}}selected{{end}}>Скрыта</option>
+        </select>
+      </label>
+      <button type="submit">Применить</button>
+    </form>
+
+    <section aria-labelledby="vacancies-heading">
+      <h2 id="vacancies-heading">Лента</h2>
+      {{if .Vacancies}}
+      <div class="vacancies">
+        {{range .Vacancies}}
+        <article class="vacancy">
+          <div>
+            <h3>{{if .Link}}<a href="{{.Link}}" rel="noreferrer">{{.Title}}</a>{{else}}{{.Title}}{{end}}</h3>
+            <p>{{.Company}} · {{.SourceName}}</p>
+          </div>
+          <div class="details">
+            {{if .Salary}}<span>{{.Salary}}</span>{{end}}
+            <span class="badge">{{.ListingStatus}}</span>
+            <span class="badge">{{.UserStatus}}</span>
+          </div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}<p class="empty">Вакансий по выбранным фильтрам нет.</p>{{end}}
+    </section>
+
+    <section aria-labelledby="runs-heading">
+      <h2 id="runs-heading">Последние запуски</h2>
+      {{if .Runs}}
+      <div class="runs">
+        {{range .Runs}}
+        <article class="run">
+          <strong>{{.SourceName}}</strong>
+          <span>{{.StartedAtText}}</span>
+          <span class="badge">{{.Status}}</span>
+          <span>+{{.AddedCount}} новых · {{.UpdatedCount}} изм. · {{.ArchivedCount}} архив.</span>
+        </article>
+        {{end}}
+      </div>
+      {{else}}<p class="empty">Запусков пока не было.</p>{{end}}
+    </section>
+  </main>
+</body>
+</html>
